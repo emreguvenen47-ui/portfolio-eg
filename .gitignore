@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the template carries no values and is how a recipient knows which
+# keys exist at all.
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +42,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.provider-usage.json
+.snapshot.json
+
+# local dev fallback store (used until the Supabase migrations are run)
+/data/.dev-store/
+data/.cache/
+# Personal holdings. Never packaged for distribution — a recipient uploads
+# their own workbook on /settings, or points PORTFOLIO_FILE at one.
+data/*.xlsx

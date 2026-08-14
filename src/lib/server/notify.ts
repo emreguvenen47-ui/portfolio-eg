@@ -33,6 +33,30 @@ const from = () => process.env.NOTIFY_FROM_EMAIL?.trim() || "onboarding@resend.d
 
 export const isNotifyConfigured = (): boolean => Boolean(key() && to());
 
+/**
+ * One mail per account per day.
+ *
+ * Signing up and then confirming the address produces two events within a
+ * minute — a signup and the sign-in that follows it — and the second says
+ * nothing the first did not. The operator wants to know a person arrived, not
+ * to receive a mail every time they open a tab.
+ */
+const SEEN_KEY = Symbol.for("pcc.notify.seen");
+const seen: Map<string, number> = ((
+  globalThis as unknown as Record<symbol, Map<string, number>>
+)[SEEN_KEY] ??= new Map());
+
+const DEDUPE_MS = 24 * 60 * 60_000;
+
+function alreadyToldToday(userId: string): boolean {
+  const now = Date.now();
+  for (const [k, at] of seen) if (now - at > DEDUPE_MS) seen.delete(k);
+  const hit = seen.get(userId);
+  if (hit !== undefined && now - hit < DEDUPE_MS) return true;
+  seen.set(userId, now);
+  return false;
+}
+
 /** Exported for tests: everything the mail would contain, without sending. */
 export function buildNotification(input: {
   event: AuthEvent;
@@ -72,6 +96,9 @@ export async function notifyAuthEvent(input: {
 
   // No point mailing the operator about their own sessions.
   if (input.email.toLowerCase() === recipient.toLowerCase()) return;
+
+  // A confirmation sign-in moments after signing up is the same arrival.
+  if (alreadyToldToday(input.userId)) return;
 
   const { subject, text } = buildNotification(input);
 

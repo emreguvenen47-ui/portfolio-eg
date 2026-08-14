@@ -1,5 +1,6 @@
 import "server-only";
 import { getCrumb } from "./yahoo-fundamentals";
+import { greeks, yearsToExpiry, type Greeks } from "@/lib/research/greeks";
 
 /**
  * Option chains.
@@ -16,8 +17,10 @@ import { getCrumb } from "./yahoo-fundamentals";
  * says which happened, because a position valued off a stale print is not the
  * same as one valued off a live market.
  *
- * Nothing here is modelled. No Black-Scholes, no synthetic greeks: implied
- * volatility is whatever Yahoo publishes and is absent when they publish none.
+ * Greeks are computed from the chain's own published implied volatility —
+ * arithmetic on observed inputs, not a forecast. Nothing is solved for: a
+ * strike with no credible IV gets no greeks rather than an invented one. See
+ * greeks.ts.
  */
 
 const BASE = "https://query2.finance.yahoo.com/v7/finance/options";
@@ -46,6 +49,12 @@ export interface OptionQuote {
   openInterest: number | null;
   volume: number | null;
   inTheMoney: boolean | null;
+  /**
+   * Derivatives of the Black-Scholes price at this contract's own published
+   * implied volatility. Null when the venue publishes no IV — see greeks.ts
+   * for why nothing is solved for in that case.
+   */
+  greeks: Greeks | null;
 }
 
 export interface OptionChain {
@@ -87,7 +96,12 @@ interface RawContract {
   inTheMoney?: boolean;
 }
 
-function toQuote(c: RawContract, type: OptionType): OptionQuote | null {
+function toQuote(
+  c: RawContract,
+  type: OptionType,
+  spot: number | null,
+  rate: number,
+): OptionQuote | null {
   const strike = n(c.strike);
   const contract = c.contractSymbol;
   const expiry = toDate(c.expiration);
@@ -101,6 +115,37 @@ function toQuote(c: RawContract, type: OptionType): OptionQuote | null {
   const twoSided = bid !== null && ask !== null && ask > 0;
   const mark = twoSided ? (bid + ask) / 2 : last;
 
+  const iv = n(c.impliedVolatility);
+  const markPrice = mark !== null && mark > 0 ? mark : null;
+
+  /**
+   * Greeks, but only when the chain's own price agrees with them.
+   *
+   * A published implied volatility is supposed to be the number that makes the
+   * model reproduce the market price. Out of hours Yahoo publishes values that
+   * do not: a September call marked at 7.35 came back with an IV of 1.6%,
+   * which prices the same contract at one cent. Delta and gamma computed from
+   * that are arithmetically correct and financially meaningless.
+   *
+   * So the model is checked against the market it claims to describe. If the
+   * theoretical price is nowhere near the mark, the input was not an implied
+   * volatility for this contract and the greeks are withheld. Nothing is
+   * solved for and nothing is adjusted — the row simply reads N/A, which is
+   * what "we cannot measure this right now" looks like.
+   */
+  const raw =
+    spot !== null && iv !== null
+      ? greeks({ spot, strike, years: yearsToExpiry(expiry), iv, rate, type })
+      : null;
+
+  // Proportional, with a few cents of slack for contracts priced in pennies.
+  // A flat allowance let a 0.23 mark pass against a theoretical of zero, which
+  // is the same failure in smaller numbers.
+  const consistent =
+    raw !== null &&
+    (markPrice === null ||
+      Math.abs(raw.theoretical - markPrice) <= Math.max(0.35 * markPrice, 0.05));
+
   return {
     contract,
     type,
@@ -111,12 +156,24 @@ function toQuote(c: RawContract, type: OptionType): OptionQuote | null {
     last,
     mark: mark !== null && mark > 0 ? mark : null,
     markFrom: mark === null || mark <= 0 ? null : twoSided ? "MID" : "LAST",
-    impliedVolatility: n(c.impliedVolatility),
+    impliedVolatility: iv,
     openInterest: n(c.openInterest),
     volume: n(c.volume),
     inTheMoney: typeof c.inTheMoney === "boolean" ? c.inTheMoney : null,
+    greeks: consistent ? raw : null,
   };
 }
+
+/**
+ * Short-rate assumption for discounting.
+ *
+ * A single constant rather than a live curve. Over the horizons these chains
+ * cover, rho is the smallest greek by an order of magnitude and a point of
+ * rate error moves a one-year at-the-money option by cents; fetching a curve
+ * to refine it would add a dependency for no visible difference. Stated here
+ * so the assumption is not hidden.
+ */
+const RISK_FREE = 0.045;
 
 /**
  * Fetch one expiry's chain. Omit `expiry` for the nearest one.
@@ -172,10 +229,10 @@ export async function getOptionChain(
         .filter((d): d is string => d !== null),
       expiry: toDate(block?.expirationDate),
       calls: (block?.calls ?? [])
-        .map((c) => toQuote(c, "CALL"))
+        .map((c) => toQuote(c, "CALL", n(r.quote?.regularMarketPrice), RISK_FREE))
         .filter((q): q is OptionQuote => q !== null),
       puts: (block?.puts ?? [])
-        .map((c) => toQuote(c, "PUT"))
+        .map((c) => toQuote(c, "PUT", n(r.quote?.regularMarketPrice), RISK_FREE))
         .filter((q): q is OptionQuote => q !== null),
       fetchedAt: new Date().toISOString(),
     };

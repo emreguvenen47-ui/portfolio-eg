@@ -27,6 +27,13 @@ export interface OpenLot {
 
 export interface VirtualPosition {
   ticker: string;
+  /**
+   * Set when this position is an option contract. Its presence changes what
+   * every number on the row means: `shares` is contracts, `currentPrice` is
+   * the contract's own mark rather than the underlying's, and cash is scaled
+   * by the multiplier.
+   */
+  option?: { contract: string; type: "CALL" | "PUT"; strike: number; expiry: string; multiplier: number };
   shares: number;
   averageCost: number;
   costBasis: number;
@@ -59,23 +66,54 @@ export interface VirtualValuation {
   currency: string;
 }
 
+/** The calendar day before an ISO date, for the series anchor. */
+function dayBefore(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 const asc = (a: Trade, b: Trade) =>
   a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : a.date.localeCompare(b.date);
+
+/**
+ * Current marks for open option contracts, keyed by contract symbol.
+ *
+ * Passed in rather than fetched here because valuation is pure arithmetic and
+ * the caller already knows which contracts are open. A contract absent from
+ * this map is valued at null — an expired or delisted strike has no price, and
+ * a guess in a ledger is worse than a blank.
+ */
+export type OptionMarks = Record<string, number | null | undefined>;
 
 export function valueVirtual(
   portfolio: VirtualPortfolio,
   quotes: Record<string, Quote | undefined>,
+  optionMarks: OptionMarks = {},
 ): VirtualValuation {
+  /**
+   * Grouped by instrument, not by ticker.
+   *
+   * Two different strikes on the same underlying are two positions, and
+   * netting them — which grouping by ticker did — produced a single row whose
+   * share count and cost basis described nothing that exists. The key is the
+   * contract for an option and the ticker for shares.
+   */
   const byTicker = new Map<string, Trade[]>();
   for (const t of portfolio.trades) {
-    byTicker.set(t.ticker, [...(byTicker.get(t.ticker) ?? []), t]);
+    const key = t.option ? t.option.contract : t.ticker;
+    byTicker.set(key, [...(byTicker.get(key) ?? []), t]);
   }
 
   const positions: VirtualPosition[] = [];
   const unavailable: string[] = [];
   let realizedTotal = 0;
 
-  for (const [ticker, trades] of byTicker) {
+  for (const [key, trades] of byTicker) {
+    const leg = trades.find((t) => t.option)?.option;
+    const ticker = trades[0].ticker;
+    // Premium is quoted per share and settles per contract.
+    const mult = leg?.multiplier ?? 1;
     const open: { tradeId: string; date: string; qty: number; price: number; fees: number }[] = [];
     let realized = 0;
 
@@ -93,12 +131,13 @@ export function valueVirtual(
 
       // FIFO: consume the oldest open lots first.
       let remaining = t.quantity;
-      const proceedsPerShare = t.price - t.fees / Math.max(t.quantity, 1e-9);
+      const sellMult = t.option?.multiplier ?? 1;
+      const proceedsPerUnit = t.price * sellMult - t.fees / Math.max(t.quantity, 1e-9);
       while (remaining > 1e-9 && open.length > 0) {
         const lot = open[0];
         const take = Math.min(remaining, lot.qty);
-        const costPerShare = lot.price + lot.fees / Math.max(lot.qty, 1e-9);
-        realized += take * (proceedsPerShare - costPerShare);
+        const costPerUnit = lot.price * mult + lot.fees / Math.max(lot.qty, 1e-9);
+        realized += take * (proceedsPerUnit - costPerUnit);
         lot.qty -= take;
         remaining -= take;
         if (lot.qty <= 1e-9) open.shift();
@@ -113,21 +152,28 @@ export function valueVirtual(
       continue;
     }
 
-    const quote = quotes[ticker];
-    const price = quote?.price ?? null;
-    if (price === null) unavailable.push(ticker);
+    /**
+     * An option is priced by its own contract, never by the underlying.
+     * Valuing a $3.50 call off a $305 share quote is not an approximation —
+     * it is a different instrument.
+     */
+    const quote = leg ? undefined : quotes[ticker];
+    const price = leg ? (optionMarks[leg.contract] ?? null) : (quote?.price ?? null);
+    if (price === null) unavailable.push(leg ? leg.contract : ticker);
 
     const costBasis = open.reduce(
-      (s, l) => s + l.qty * (l.price + l.fees / Math.max(l.qty, 1e-9)),
+      (s, l) => s + l.qty * l.price * mult + l.fees,
       0,
     );
-    const value = price === null ? 0 : shares * price;
+    const value = price === null ? 0 : shares * price * mult;
     const dailyPct = quote?.changePercent ?? null;
 
     positions.push({
       ticker,
+      option: leg,
       shares,
-      averageCost: costBasis / shares,
+      // Per share, so it sits beside a quoted premium rather than beside cash.
+      averageCost: costBasis / (shares * mult),
       costBasis,
       currentPrice: price,
       value,
@@ -214,12 +260,24 @@ export function virtualSeries(
   if (dates.size === 0) return [];
 
   const axis = [...dates].sort();
+
+  /**
+   * Start the line at the money that was deposited.
+   *
+   * The first bar used to be the first trading day *after* the opening trade,
+   * so the chart began at whatever that day's close made the position worth.
+   * Buy at 100, see the day close at 98, and the line opens below par — which
+   * reads as "this portfolio is already down" before it has drawn a second
+   * point. Anchoring at the deposit makes the first move a move rather than a
+   * starting position.
+   */
+  const anchor: Point[] = [{ date: dayBefore(axis[0]), close: portfolio.initialCash }];
   const lastKnown = new Map<string, number>();
   const shares = new Map<string, number>();
   let cash = portfolio.initialCash;
   let tradeIndex = 0;
 
-  const out: Point[] = [];
+  const out: Point[] = [...anchor];
   for (const date of axis) {
     // Apply every trade dated on or before this bar.
     while (tradeIndex < sorted.length && sorted[tradeIndex].date <= date) {

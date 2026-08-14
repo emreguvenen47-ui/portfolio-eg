@@ -31,6 +31,13 @@ interface Quote {
   openInterest: number | null;
   volume: number | null;
   inTheMoney: boolean | null;
+  greeks: {
+    delta: number;
+    gamma: number;
+    vega: number;
+    theta: number;
+    theoretical: number;
+  } | null;
 }
 
 interface Chain {
@@ -238,6 +245,8 @@ export function OptionPanel({ id, currency }: { id: string; currency: string }) 
                 <th className="py-1 text-right">Ask</th>
                 <th className="py-1 text-right">Mark</th>
                 <th className="py-1 text-right">IV</th>
+                <th className="py-1 text-right" title="Change in premium per 1.00 move in the underlying.">Δ</th>
+                <th className="py-1 text-right" title="Change in premium per calendar day.">Θ</th>
                 <th className="py-1 text-right">OI</th>
                 <th className="px-3 py-1 text-right">Src</th>
               </tr>
@@ -262,6 +271,19 @@ export function OptionPanel({ id, currency }: { id: string; currency: string }) 
                   <td className="py-1 text-right tabular-nums">{money(q.ask)}</td>
                   <td className="py-1 text-right tabular-nums font-medium">{money(q.mark)}</td>
                   <td className="py-1 text-right tabular-nums">{pct(q.impliedVolatility)}</td>
+                  <td
+                    className="py-1 text-right tabular-nums"
+                    title={
+                      q.greeks
+                        ? `Model price ${q.greeks.theoretical.toFixed(2)} at this contract's own implied volatility.`
+                        : "No greeks: the published volatility does not price this contract, so anything derived from it would be meaningless."
+                    }
+                  >
+                    {q.greeks ? q.greeks.delta.toFixed(2) : "—"}
+                  </td>
+                  <td className="py-1 text-right tabular-nums">
+                    {q.greeks ? q.greeks.theta.toFixed(3) : "—"}
+                  </td>
                   <td className="py-1 text-right tabular-nums">{q.openInterest ?? "—"}</td>
                   <td
                     className={cn(
@@ -329,7 +351,10 @@ export function OptionPanel({ id, currency }: { id: string; currency: string }) 
         Contracts come from the venue&apos;s listed chain, so a position cannot describe a strike
         that does not exist. Premium is quoted per share and multiplied by 100 for cash, the way
         the contract settles. A row marked LAST has no live two-sided quote — that price may be
-        hours old. Paper only: nothing here places an order.
+        hours old. Δ and Θ come from the contract&apos;s own published volatility and are blank
+        when that volatility does not price the contract — outside market hours the venue
+        publishes placeholders, and greeks derived from those would look computed while meaning
+        nothing. Paper only: nothing here places an order.
       </p>
     </section>
   );

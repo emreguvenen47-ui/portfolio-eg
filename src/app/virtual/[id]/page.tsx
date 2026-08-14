@@ -7,6 +7,7 @@ import { tradeNotional } from "@/lib/server/virtual-portfolios";
 import { getVirtual } from "@/lib/server/virtual-portfolios";
 import { valueVirtual } from "@/lib/portfolio/virtual-analytics";
 import { getQuotes } from "@/lib/providers";
+import { getOptionChain } from "@/lib/providers/yahoo-options";
 import { fmtPctPoints, signClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -18,8 +19,36 @@ export default async function VirtualDetail(props: PageProps<"/virtual/[id]">) {
   if (!portfolio) notFound();
 
   const tickers = [...new Set(portfolio.trades.map((t) => t.ticker))];
-  const quotes = tickers.length ? await getQuotes(tickers) : {};
-  const v = valueVirtual(portfolio, quotes);
+
+  /**
+   * Option contracts are priced from their own chain, not the underlying.
+   *
+   * One chain request per (underlying, expiry) still open — the same request
+   * covers every strike on it, so a spread costs one fetch rather than four.
+   * A contract the venue no longer lists resolves to null and the row reads
+   * N/A, which is the truth: there is no price for a strike that has expired.
+   */
+  const openLegs = new Map<string, { symbol: string; expiry: string }>();
+  for (const t of portfolio.trades) {
+    if (t.option) openLegs.set(`${t.ticker}:${t.option.expiry}`, { symbol: t.ticker, expiry: t.option.expiry });
+  }
+
+  const [quotes, chains] = await Promise.all([
+    tickers.length ? getQuotes(tickers) : Promise.resolve({}),
+    Promise.all(
+      [...openLegs.values()].map((l) =>
+        getOptionChain(l.symbol, l.expiry).catch(() => null),
+      ),
+    ),
+  ]);
+
+  const optionMarks: Record<string, number | null> = {};
+  for (const chain of chains) {
+    if (!chain) continue;
+    for (const q of [...chain.calls, ...chain.puts]) optionMarks[q.contract] = q.mark;
+  }
+
+  const v = valueVirtual(portfolio, quotes, optionMarks);
 
   const money = (n: number) =>
     new Intl.NumberFormat("en-US", {

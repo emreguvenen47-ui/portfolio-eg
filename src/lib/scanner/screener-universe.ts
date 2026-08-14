@@ -42,6 +42,14 @@ export interface UniverseRow {
   /** Average daily share volume as reported by the screener. */
   volume: number | null;
   dollarVolume: number | null;
+  /**
+   * Listing venue — NASDAQ, NYSE or AMEX.
+   *
+   * Carried because some sources key a company by venue rather than by ticker
+   * alone, and guessing produces a lookup for a company that does not exist
+   * rather than an error. Null for BIST, which has one venue.
+   */
+  exchange: string | null;
 }
 
 interface NasdaqRow {
@@ -61,10 +69,32 @@ const money = (s: string | undefined): number | null => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+/**
+ * The three US venues, fetched separately so each row knows where it lists.
+ *
+ * The combined download does not say. Three requests behind a twelve-hour
+ * cache is a small price for never having to guess a venue — and a wrong guess
+ * does not fail loudly, it returns a different company's numbers.
+ */
+const US_VENUES = ["nasdaq", "nyse", "amex"] as const;
+
 async function loadUs(): Promise<UniverseRow[]> {
+  const perVenue = await Promise.all(US_VENUES.map((v) => loadVenue(v)));
+  const all = perVenue.flat();
+
+  // If every venue failed, say so by returning nothing; the caller keeps the
+  // previous pull rather than emptying the scanner.
+  if (all.length === 0) return [];
+
+  // A symbol listed on two venues keeps the first, which is the deeper book.
+  const seen = new Set<string>();
+  return all.filter((r) => (seen.has(r.symbol) ? false : (seen.add(r.symbol), true)));
+}
+
+async function loadVenue(venue: (typeof US_VENUES)[number]): Promise<UniverseRow[]> {
   try {
     const res = await fetch(
-      "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0&download=true",
+      `https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0&download=true&exchange=${venue}`,
       {
         cache: "no-store",
         headers: { "User-Agent": UA, Accept: "application/json" },
@@ -92,6 +122,7 @@ async function loadUs(): Promise<UniverseRow[]> {
           price,
           volume,
           dollarVolume: price !== null && volume !== null ? price * volume : null,
+          exchange: venue.toUpperCase(),
         };
       });
   } catch {
@@ -120,6 +151,8 @@ async function loadBist(): Promise<UniverseRow[]> {
     price: null,
     volume: null,
     dollarVolume: null,
+    // Borsa İstanbul has one venue, so there is nothing to distinguish.
+    exchange: null,
   }));
 }
 

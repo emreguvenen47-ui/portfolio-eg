@@ -47,6 +47,12 @@ interface Slot<T> {
   maxAgeMs: number;
 }
 
+/** Legacy file names, kept so existing local caches carry over. */
+const DISK_FILE: Record<string, string> = {
+  scanner: "scanner-candidates",
+  screener: "screener-rows",
+};
+
 const SLOTS = Symbol.for("pcc.sharedCache.slots");
 const slots: Map<string, Slot<unknown>> = ((
   globalThis as unknown as Record<symbol, Map<string, Slot<unknown>>>
@@ -61,9 +67,16 @@ function slotFor<T>(kind: string, maxAgeMs: number): Slot<T> {
       hydrated: false,
       hydrating: null,
       timer: null,
-      // Same file the local-only cache used, so an existing machine keeps
-      // whatever it had already assembled.
-      disk: diskCache<T>(kind === "scanner" ? "scanner-candidates" : "screener-rows", maxAgeMs),
+      /**
+       * One file per kind.
+       *
+       * The first two keep the names their local-only predecessors used, so a
+       * machine that has already assembled a listing does not start over. Any
+       * other kind gets its own file — an earlier version sent everything that
+       * was not "scanner" to the screener's file, and a third kind added later
+       * read the screener's rows back as its own type.
+       */
+      disk: diskCache<T>(DISK_FILE[kind] ?? `shared-${kind}`, maxAgeMs),
       maxAgeMs,
     };
     slots.set(kind, s as Slot<unknown>);

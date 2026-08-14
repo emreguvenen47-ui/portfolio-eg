@@ -17,6 +17,7 @@ const row = (o: Partial<UniverseRow> & { symbol: string; marketCap: number | nul
   price: 50,
   volume: 1_000_000,
   dollarVolume: 50_000_000,
+  exchange: "NASDAQ",
   ...o,
 });
 

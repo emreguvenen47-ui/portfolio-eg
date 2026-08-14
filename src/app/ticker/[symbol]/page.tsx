@@ -5,6 +5,18 @@ import { TickerChart } from "@/components/charts/ticker-chart";
 import { QuoteLine } from "@/components/shell/quote-line";
 import { getHistoricalPrices, getQuotes } from "@/lib/providers";
 import { getContext } from "@/lib/server/context";
+import { ThirdSource } from "@/components/research/third-source";
+import { cachedScreenerUniverse } from "@/lib/scanner/screener-universe";
+
+/**
+ * Which field of Google's financials answers the same question as one of our
+ * rows. A label absent here simply gets no third column.
+ */
+const THIRD_SOURCE_FIELD: Record<string, "netMargin" | "returnOnAssets" | "priceToBook" | "eps"> = {
+  "Net Margin": "netMargin",
+  ROA: "returnOnAssets",
+  "P/B": "priceToBook",
+};
 import { peekPortfolioForCaller } from "@/lib/server/user-portfolio";
 import { listPortfolios, currentAllocation } from "@/lib/server/ai-portfolios";
 import { fmtNum, fmtPct, fmtPctPoints, fmtUsd } from "@/lib/format";
@@ -231,7 +243,35 @@ export default async function TickerPage(props: PageProps<"/ticker/[symbol]">) {
   const trends = buildTrends(periods);
   const quality = earningsQuality(periods);
   const capital = capitalAllocation(periods);
+  const universeRow = cachedScreenerUniverse().find((r) => r.symbol === symbol);
   const overviewSections = overview(periods, metrics, symbol);
+
+  /**
+   * The rows worth a third opinion.
+   *
+   * Only the ratios that already have two derivations and can be answered by
+   * Google's financials. Anything else would spend a credit for a column the
+   * third source cannot fill.
+   */
+  const verifiable = overviewSections
+    .flatMap((sec) => sec.items)
+    .filter((i) => i.agreement)
+    .flatMap((i) => {
+      const from = THIRD_SOURCE_FIELD[i.label];
+      if (!from) return [];
+      const m = /filings give ([-\d.]+), the provider ([-\d.]+)/.exec(i.hint ?? "");
+      return [
+        {
+          label: i.label,
+          // A confirmed row reports one number both sources reached; a
+          // disputed one carries both in its note.
+          filed: m ? Number(m[1]) : i.value,
+          reported: m ? Number(m[2]) : i.value,
+          from,
+          unit: (i.format === "x" ? "x" : "pct") as "pct" | "x",
+        },
+      ];
+    });
   const keyMetrics = buildKeyMetrics({ metrics, periods, price: last, analysts: analystReport, symbol });
 
   // Valuation verdict for Smart Money: the median of the rows that have data,
@@ -558,6 +598,17 @@ export default async function TickerPage(props: PageProps<"/ticker/[symbol]">) {
           annual={annualPeriods}
           sym={moneySym}
         />
+        {verifiable.length > 0 && (
+          <ThirdSource
+            symbol={symbol}
+            // Google keys quotes by venue. The listing knows which one, and
+            // NASDAQ is the fallback rather than a guess dressed as fact —
+            // a wrong venue returns no financials rather than another
+            // company's.
+            exchange={universeRow?.exchange ?? "NASDAQ"}
+            readings={verifiable}
+          />
+        )}
       </Section>
 
       <Section

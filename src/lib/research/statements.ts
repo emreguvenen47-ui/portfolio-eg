@@ -1,3 +1,9 @@
+import {
+  crossCheck,
+  GROWTH_TOLERANCE,
+  RATIO_TOLERANCE,
+  type Agreement,
+} from "./cross-check";
 import type { FinancialPeriod, KeyMetrics } from "@/lib/providers/fundamentals";
 import {
   bankMetrics,
@@ -429,6 +435,14 @@ export interface OverviewMetric {
   value: number | null;
   format: MetricRow["format"];
   hint?: string;
+  /**
+   * Whether a second, independent derivation agreed with this figure.
+   *
+   * Present only on the rows that have two sources — a ratio computed from the
+   * filed statements and the provider's own precomputed metric. Rows without
+   * it are single-derivation by nature and say nothing either way.
+   */
+  agreement?: Agreement;
 }
 
 export interface OverviewSection {
@@ -586,6 +600,51 @@ function buildOperatingOverview(
   const ttmRev = ttm((p) => p.revenue);
   const debt = last ? totalDebt(last) : null;
   const nc = last ? netCash(last) : null;
+
+  /**
+   * Every ratio below is derived twice and compared.
+   *
+   * The previous version read the provider's metric and fell back to a single
+   * quarter — so a figure labelled TTM was sometimes one quarter, and ROE and
+   * ROA had no second derivation at all. Both readings are now computed on the
+   * same trailing-twelve basis and `crossCheck` decides which to show and what
+   * to say about it.
+   */
+  const ck = {
+    gross: crossCheck(ratio(ttm((p) => p.grossProfit), ttmRev), num(m?.grossMarginTTM)),
+    operating: crossCheck(ratio(ttm((p) => p.operatingIncome), ttmRev), num(m?.operatingMarginTTM)),
+    net: crossCheck(ratio(ttmNi, ttmRev), num(m?.netProfitMarginTTM)),
+    roe: crossCheck(last?.equity ? ratio(ttmNi, last.equity) : null, num(m?.roeTTM)),
+    roa: crossCheck(last?.totalAssets ? ratio(ttmNi, last.totalAssets) : null, num(m?.roaTTM)),
+    // Both sides as a plain ratio. The provider reports this one as a ratio
+    // already, not a percentage — scaling it here produced a disagreement that
+    // was purely a unit mismatch.
+    debtEquity: crossCheck(
+      debt !== null && last?.equity ? debt / last.equity : null,
+      num(m?.["totalDebt/totalEquityQuarterly"]),
+      RATIO_TOLERANCE,
+    ),
+    currentRatio: crossCheck(
+      last ? ratioOf(last.currentAssets, last.currentLiabilities) : null,
+      num(m?.currentRatioQuarterly),
+      RATIO_TOLERANCE,
+    ),
+    epsGrowth: crossCheck(
+      ttmGrowth(periods, (p) => p.eps),
+      num(m?.epsGrowthTTMYoy),
+      GROWTH_TOLERANCE,
+    ),
+  } as const;
+
+  /** One line explaining how well corroborated a figure is. */
+  const note = (c: { agreement: Agreement; filed: number | null; reported: number | null }) =>
+    c.agreement === "CONFIRMED"
+      ? "Confirmed: computed from the filings and the provider's own figure agree."
+      : c.agreement === "SINGLE_SOURCE"
+        ? "One source only — no second derivation available to corroborate it."
+        : c.agreement === "DISPUTED"
+          ? `Sources disagree: filings give ${c.filed?.toFixed(2)}, the provider ${c.reported?.toFixed(2)}. Showing the filed figure.`
+          : undefined;
   const shares = last?.dilutedShares ?? null;
 
   return [
@@ -596,16 +655,16 @@ function buildOperatingOverview(
         // Filings first, provider metric only as a fallback — see ttmGrowth.
         { label: "Revenue Growth YoY", value: ttmGrowth(periods, (p) => p.revenue) ?? num(m?.revenueGrowthTTMYoy), format: "pct", hint: "Trailing twelve months of filed revenue against the twelve before." },
         { label: "EPS (TTM)", value: ttm((p) => p.eps), format: "num" },
-        { label: "EPS Growth YoY", value: ttmGrowth(periods, (p) => p.eps) ?? num(m?.epsGrowthTTMYoy), format: "pct" },
+        { label: "EPS Growth YoY", value: ck.epsGrowth.value, format: "pct", agreement: ck.epsGrowth.agreement, hint: note(ck.epsGrowth) },
         { label: "FCF Growth YoY", value: ttmGrowth(periods, (p) => p.freeCashFlow), format: "pct" },
       ],
     },
     {
       title: "Profitability",
       items: [
-        { label: "Gross Margin", value: num(m?.grossMarginTTM) ?? ratio(last?.grossProfit ?? null, last?.revenue ?? null), format: "pct" },
-        { label: "Operating Margin", value: num(m?.operatingMarginTTM) ?? ratio(last?.operatingIncome ?? null, last?.revenue ?? null), format: "pct" },
-        { label: "Net Margin", value: num(m?.netProfitMarginTTM) ?? ratio(last?.netIncome ?? null, last?.revenue ?? null), format: "pct" },
+        { label: "Gross Margin", value: ck.gross.value, format: "pct", agreement: ck.gross.agreement, hint: note(ck.gross) },
+        { label: "Operating Margin", value: ck.operating.value, format: "pct", agreement: ck.operating.agreement, hint: note(ck.operating) },
+        { label: "Net Margin", value: ck.net.value, format: "pct", agreement: ck.net.agreement, hint: note(ck.net) },
         { label: "FCF Margin", value: ratio(ttmFcf, ttmRev), format: "pct" },
       ],
     },
@@ -623,15 +682,15 @@ function buildOperatingOverview(
         { label: "Cash & Equivalents", value: last?.cash ?? null, format: "usd" },
         { label: "Total Debt", value: debt, format: "usd" },
         { label: nc !== null && nc >= 0 ? "Net Cash" : "Net Debt", value: nc === null ? null : Math.abs(nc), format: "usd" },
-        { label: "Debt / Equity", value: num(m?.["totalDebt/totalEquityQuarterly"]), format: "x" },
-        { label: "Current Ratio", value: num(m?.currentRatioQuarterly) ?? (last ? ratioOf(last.currentAssets, last.currentLiabilities) : null), format: "x" },
+        { label: "Debt / Equity", value: ck.debtEquity.value, format: "x", agreement: ck.debtEquity.agreement, hint: note(ck.debtEquity) },
+        { label: "Current Ratio", value: ck.currentRatio.value, format: "x", agreement: ck.currentRatio.agreement, hint: note(ck.currentRatio) },
       ],
     },
     {
       title: "Capital Efficiency",
       items: [
-        { label: "ROE", value: num(m?.roeTTM), format: "pct" },
-        { label: "ROA", value: num(m?.roaTTM), format: "pct" },
+        { label: "ROE", value: ck.roe.value, format: "pct", agreement: ck.roe.agreement, hint: note(ck.roe) },
+        { label: "ROA", value: ck.roa.value, format: "pct", agreement: ck.roa.agreement, hint: note(ck.roa) },
         { label: "ROIC", value: last ? roic(last, periods) : null, format: "pct", hint: "NOPAT ÷ (equity + debt − cash), from reported figures. Blank when any input is missing." },
       ],
     },

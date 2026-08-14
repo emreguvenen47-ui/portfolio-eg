@@ -16,6 +16,22 @@ export const dynamic = "force-dynamic";
 
 /** Paper-trading CRUD. Arithmetic and market data only — no model calls. */
 
+/**
+ * Option leg, when the trade is a contract.
+ *
+ * `price` above stays the premium per share, exactly as a chain quotes it, and
+ * `multiplier` turns it into cash. Storing the multiplier rather than assuming
+ * 100 means a non-standard contract cannot be silently valued as a standard
+ * one.
+ */
+const OptionLegInput = z.object({
+  contract: z.string().min(3).max(40),
+  type: z.enum(["CALL", "PUT"]),
+  strike: z.number().positive().max(1e7),
+  expiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  multiplier: z.number().positive().max(10_000).default(100),
+});
+
 const TradeInput = z.object({
   ticker: z.string().min(1).max(24),
   side: z.enum(["BUY", "SELL"]),
@@ -25,6 +41,7 @@ const TradeInput = z.object({
   currency: z.string().max(8).default("USD"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   note: z.string().max(200).default(""),
+  option: OptionLegInput.optional(),
 });
 
 const Body = z.discriminatedUnion("action", [

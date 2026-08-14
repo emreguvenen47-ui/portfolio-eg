@@ -1,6 +1,6 @@
 import type { Candle, Quote } from "@/lib/types";
 import type { Point } from "./analytics";
-import type { Trade, VirtualPortfolio } from "@/lib/server/virtual-portfolios";
+import { tradeNotional, type Trade, VirtualPortfolio } from "@/lib/server/virtual-portfolios";
 
 /**
  * Valuation and P&L for a paper portfolio, from real prices only.
@@ -224,7 +224,7 @@ export function virtualSeries(
     // Apply every trade dated on or before this bar.
     while (tradeIndex < sorted.length && sorted[tradeIndex].date <= date) {
       const t = sorted[tradeIndex++];
-      const gross = t.quantity * t.price;
+      const gross = tradeNotional(t);
       if (t.side === "BUY") {
         shares.set(t.ticker, (shares.get(t.ticker) ?? 0) + t.quantity);
         cash -= gross + t.fees;

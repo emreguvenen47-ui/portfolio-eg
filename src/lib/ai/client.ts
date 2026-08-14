@@ -35,6 +35,43 @@ export class AiUnavailableError extends Error {
   }
 }
 
+/**
+ * Turn a provider failure into something a person can act on.
+ *
+ * The SDK throws with the raw JSON body attached, and that was going straight
+ * to the interface: a user clicking Executive Brief with an empty balance saw
+ * a 500 and a wall of `{"type":"error","error":{...}}`, which reads as a bug
+ * in this app rather than as an account that needs topping up.
+ */
+export function describeAiError(e: unknown): { message: string; status: number } {
+  if (e instanceof AiUnavailableError) {
+    return { message: e.message, status: 503 };
+  }
+
+  const raw = e instanceof Error ? e.message : String(e);
+
+  if (/credit balance is too low|insufficient[_ ]quota|billing/i.test(raw)) {
+    return {
+      message:
+        "The Anthropic account has no credit left, so this brief could not be generated. " +
+        "Add credit at console.anthropic.com → Plans & Billing. Nothing else in the app " +
+        "depends on it — every figure outside the AI panels is computed locally.",
+      status: 402,
+    };
+  }
+  if (/rate.?limit|429/i.test(raw)) {
+    return { message: "Too many AI requests just now — try again in a moment.", status: 429 };
+  }
+  if (/api[_ ]?key|authentication|401/i.test(raw)) {
+    return { message: "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.", status: 401 };
+  }
+  if (/overloaded|529|timeout|ETIMEDOUT/i.test(raw)) {
+    return { message: "The model is busy. Try again shortly.", status: 503 };
+  }
+
+  return { message: raw.slice(0, 300), status: 500 };
+}
+
 export interface AiCallOptions {
   system: string;
   user: string;

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { AI_LIMIT, checkLimit, clientIdFrom, readJsonCapped } from "@/lib/server/rate-limit";
 import { getContext } from "@/lib/server/context";
 import { getHistories } from "@/lib/providers";
-import { generateJson, isAiConfigured } from "@/lib/ai/client";
+import { generateJson, isAiConfigured, describeAiError } from "@/lib/ai/client";
 import { CRISES, runCrisis } from "@/lib/portfolio/crisis";
 import { buildCalendar } from "@/lib/events/calendar";
 import { evaluateAlerts } from "@/lib/portfolio/alert-engine";
@@ -24,17 +24,21 @@ const SCHEMA = {
   properties: {
     summary: { type: "string" },
     positioning: { type: "string" },
-    risks: { type: "array", items: { type: "string" }, maxItems: 5 },
-    opportunities: { type: "array", items: { type: "string" }, maxItems: 5 },
-    actions: { type: "array", items: { type: "string" }, maxItems: 5 },
-    watchlist: { type: "array", items: { type: "string" }, maxItems: 5 },
+    // `maxItems` is not accepted in a structured-output schema — it makes the
+    // API reject the request outright. The counts are stated in the prompt.
+    risks: { type: "array", items: { type: "string" } },
+    opportunities: { type: "array", items: { type: "string" } },
+    actions: { type: "array", items: { type: "string" } },
+    watchlist: { type: "array", items: { type: "string" } },
     confidence: { type: "string", enum: ["HIGH", "MEDIUM", "LOW"] },
   },
   required: ["summary", "positioning", "risks", "opportunities", "actions", "watchlist", "confidence"],
   additionalProperties: false,
 } as const;
 
-const SYSTEM = `You prepare the discussion note for a one-person investment committee reviewing their own portfolio.
+const SYSTEM = `
+At most five entries each in risks, opportunities, actions and watchlist — the schema does not accept length limits, so keep to it here.
+You prepare the discussion note for a one-person investment committee reviewing their own portfolio.
 
 Rules:
 - Every figure in the FACTS block is real and already computed. Use those numbers; never invent one, and never contradict them.
@@ -144,8 +148,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ brief, generatedAt: new Date().toISOString() });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Brief generation failed" },
-      { status: 500 },
+      { error: describeAiError(e).message },
+      { status: describeAiError(e).status },
     );
   }
 }

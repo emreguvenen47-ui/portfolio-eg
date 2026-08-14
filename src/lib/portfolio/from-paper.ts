@@ -1,5 +1,5 @@
 import type { Portfolio, Position } from "@/lib/types";
-import type { Trade, VirtualPortfolio } from "@/lib/server/virtual-portfolios";
+import { tradeNotional, type Trade, type VirtualPortfolio } from "@/lib/server/virtual-portfolios";
 
 /**
  * Turn a paper-trading ledger into a portfolio the analytics can read.
@@ -43,7 +43,7 @@ function netPositions(trades: Trade[]): Lot[] {
 
     if (t.side === "BUY") {
       lot.shares += t.quantity;
-      lot.cost += t.quantity * t.price + t.fees;
+      lot.cost += tradeNotional(t) + t.fees;
     } else {
       const avg = lot.shares > 0 ? lot.cost / lot.shares : 0;
       const sold = Math.min(t.quantity, lot.shares);

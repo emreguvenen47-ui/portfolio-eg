@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Chip, Empty, Kpi, Note, Panel } from "@/components/shell/ui";
 import { TradePanel } from "@/components/virtual/trade-panel";
+import { OptionPanel } from "@/components/virtual/option-panel";
+import { tradeNotional } from "@/lib/server/virtual-portfolios";
 import { getVirtual } from "@/lib/server/virtual-portfolios";
 import { valueVirtual } from "@/lib/portfolio/virtual-analytics";
 import { getQuotes } from "@/lib/providers";
@@ -84,6 +86,8 @@ export default async function VirtualDetail(props: PageProps<"/virtual/[id]">) {
       <Panel title="Record Trade" bodyClassName="p-0">
         <TradePanel id={portfolio.id} currency={portfolio.currency} />
       </Panel>
+
+      <OptionPanel id={portfolio.id} currency={portfolio.currency} />
 
       <Panel title="Positions" bodyClassName="p-0">
         {v.positions.length === 0 ? (
@@ -219,7 +223,7 @@ export default async function VirtualDetail(props: PageProps<"/virtual/[id]">) {
                         {t.fees ? money(t.fees) : "—"}
                       </td>
                       <td className="tabular-nums">
-                        {money(t.quantity * t.price + (t.side === "BUY" ? t.fees : -t.fees))}
+                        {money(tradeNotional(t) + (t.side === "BUY" ? t.fees : -t.fees))}
                       </td>
                     </tr>
                   ))}

@@ -1,3 +1,4 @@
+import type { Agreement } from "@/lib/research/cross-check";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -146,18 +147,44 @@ export function Spark({
 }
 
 /** A compact label/value line, the workhorse of these panels. */
+/**
+ * A dot saying how well corroborated a figure is.
+ *
+ * Deliberately quiet — a small mark rather than a badge, because most rows are
+ * confirmed and a loud one on each would be noise. The one worth noticing is
+ * amber: two derivations of the same number disagreed, and the hover text says
+ * by how much.
+ */
+function AgreementDot({ agreement }: { agreement?: Agreement }) {
+  if (!agreement || agreement === "MISSING") return null;
+  const cls =
+    agreement === "CONFIRMED"
+      ? "bg-emerald-400/70"
+      : agreement === "DISPUTED"
+        ? "bg-[var(--amber)]"
+        : "bg-[var(--ink-3)]/50";
+  return (
+    <span
+      aria-hidden
+      className={cn("inline-block h-1 w-1 shrink-0 translate-y-[-1px] rounded-full", cls)}
+    />
+  );
+}
+
 export function Metric({
   label,
   value,
   hint,
   trend,
   tone,
+  agreement,
 }: {
   label: string;
   value: ReactNode;
   hint?: string;
   trend?: "up" | "flat" | "down";
   tone?: "pos" | "neg" | "flat";
+  agreement?: Agreement;
 }) {
   return (
     <div
@@ -174,6 +201,7 @@ export function Metric({
         >
           {value}
         </span>
+        <AgreementDot agreement={agreement} />
         {trend && <Arrow direction={trend} />}
       </span>
     </div>

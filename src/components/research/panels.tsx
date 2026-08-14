@@ -558,7 +558,26 @@ export function CapitalPanel({ data, sym = "$" }: { data: CapitalAllocation; sym
 // ------------------------------------------------------------------ overview
 
 export function OverviewGrid({ sections, sym = "$" }: { sections: OverviewSection[]; sym?: string }) {
+  const disputed = sections.flatMap((s) => s.items).filter((i) => i.agreement === "DISPUTED");
+
   return (
+    <>
+      <p className="px-3 pb-1 text-[9.5px] leading-snug text-[var(--ink-3)]">
+        Margins, returns and leverage are each derived twice — once from the filed statements and
+        once from the provider&apos;s own figure.{" "}
+        <span className="inline-block h-1 w-1 translate-y-[-1px] rounded-full bg-emerald-400/70" />{" "}
+        both agree ·{" "}
+        <span className="inline-block h-1 w-1 translate-y-[-1px] rounded-full bg-[var(--ink-3)]/50" />{" "}
+        one source only ·{" "}
+        <span className="inline-block h-1 w-1 translate-y-[-1px] rounded-full bg-[var(--amber)]" />{" "}
+        they disagree, and the filed figure is shown. Hover any row for the detail.
+        {disputed.length > 0 && (
+          <span className="text-[var(--amber)]">
+            {" "}
+            {disputed.length} figure{disputed.length === 1 ? "" : "s"} disagree here.
+          </span>
+        )}
+      </p>
     <div className="grid grid-cols-1 gap-px bg-[var(--line)] sm:grid-cols-2 lg:grid-cols-3">
       {sections.map((s) => (
         <div key={s.title} className="bg-[var(--panel)]">
@@ -571,10 +590,12 @@ export function OverviewGrid({ sections, sym = "$" }: { sections: OverviewSectio
               label={i.label}
               value={fmtValue(i.value, i.format, sym)}
               hint={i.hint}
+              agreement={i.agreement}
             />
           ))}
         </div>
       ))}
-    </div>
+      </div>
+    </>
   );
 }

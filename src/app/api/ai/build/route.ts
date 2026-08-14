@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { AI_LIMIT, checkLimit, clientIdFrom, readJsonCapped } from "@/lib/server/rate-limit";
 import { z } from "zod";
 import { getContext } from "@/lib/server/context";
-import { generateJson, isAiConfigured } from "@/lib/ai/client";
+import { generateJson, isAiConfigured, describeAiError } from "@/lib/ai/client";
 import {
   buildPortfolio,
   compare,
@@ -176,8 +176,8 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Generation failed" },
-      { status: 502 },
+      { error: describeAiError(e).message },
+      { status: describeAiError(e).status },
     );
   }
 

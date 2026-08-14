@@ -2,6 +2,12 @@ import type { FinancialPeriod, KeyMetrics } from "@/lib/providers/fundamentals";
 import type { Candle } from "@/lib/types";
 import type { Sector } from "./universe";
 import { netCash, roic, totalDebt, ttmGrowth } from "@/lib/research/statements";
+import {
+  crossCheck,
+  GROWTH_TOLERANCE,
+  RATIO_TOLERANCE,
+  type Agreement,
+} from "@/lib/research/cross-check";
 
 /**
  * The metric set for one candidate, and which metrics its sector actually
@@ -15,6 +21,24 @@ import { netCash, roic, totalDebt, ttmGrowth } from "@/lib/research/statements";
 
 export interface Facts {
   symbol: string;
+  /**
+   * How each cross-checked figure stood up. Present so a panel can mark what
+   * two sources confirmed and what rests on one.
+   */
+  agreement: Record<
+    | "revenueGrowth"
+    | "epsGrowth"
+    | "grossMargin"
+    | "operatingMargin"
+    | "netMargin"
+    | "roe"
+    | "roa"
+    | "debtToEquity"
+    | "currentRatio",
+    Agreement
+  >;
+  /** Figures where the two sources did not agree, with both readings. */
+  disputes: { metric: string; filed: number | null; reported: number | null }[];
   // growth
   revenueGrowth: number | null;
   epsGrowth: number | null;
@@ -56,7 +80,12 @@ export interface Facts {
   bookValueGrowth: number | null;
 }
 
-export type MetricKey = keyof Omit<Facts, "symbol">;
+/**
+ * The rankable fields. `agreement` and `disputes` describe how a figure was
+ * corroborated rather than being figures themselves, so they are excluded —
+ * otherwise every map keyed by MetricKey would demand an entry for them.
+ */
+export type MetricKey = keyof Omit<Facts, "symbol" | "agreement" | "disputes">;
 
 /** Whether a higher reading is better for ranking. */
 export const HIGHER_IS_BETTER: Record<MetricKey, boolean> = {
@@ -285,7 +314,8 @@ export function buildFacts(input: {
 
   const ttmRev = ttm(periods, (p) => p.revenue);
   const ttmFcf = ttm(periods, (p) => p.freeCashFlow);
-  const revGrowth = ttmGrowth(periods, (p) => p.revenue) ?? num(m?.revenueGrowthTTMYoy);
+  const revGrowthFiled = ttmGrowth(periods, (p) => p.revenue);
+  const revGrowth = revGrowthFiled ?? num(m?.revenueGrowthTTMYoy);
   const fcfM = ratioPct(ttmFcf, ttmRev);
 
   // Rule of 40 only means anything when both legs exist.
@@ -299,33 +329,73 @@ export function buildFacts(input: {
 
   const evFcf = num(m?.["currentEv/freeCashFlowTTM"]);
 
+  /**
+   * Two independent readings per figure, compared rather than ranked.
+   *
+   * These used to take the provider's precomputed metric and fall back to the
+   * filings only when it was absent — one source, presented with no hint that
+   * it was one source. Now both are computed and `crossCheck` decides: they
+   * agree and the number is corroborated, only one exists and it is marked
+   * single-source, or they disagree and the filed figure wins because it is
+   * the auditable primary record.
+   *
+   * `agreement` travels with the facts so a panel can show which numbers are
+   * confirmed twice and which are not.
+   */
+  const ttmNi = ttm(periods, (p) => p.netIncome);
+
+  const checks = {
+    revenueGrowth: crossCheck(revGrowthFiled, num(m?.revenueGrowthTTMYoy), GROWTH_TOLERANCE),
+    epsGrowth: crossCheck(ttmGrowth(periods, (p) => p.eps), num(m?.epsGrowthTTMYoy), GROWTH_TOLERANCE),
+    grossMargin: crossCheck(ratioPct(ttm(periods, (p) => p.grossProfit), ttmRev), num(m?.grossMarginTTM)),
+    operatingMargin: crossCheck(
+      ratioPct(ttm(periods, (p) => p.operatingIncome), ttmRev),
+      num(m?.operatingMarginTTM),
+    ),
+    netMargin: crossCheck(ratioPct(ttmNi, ttmRev), num(m?.netProfitMarginTTM)),
+    roe: crossCheck(last?.equity ? ratioPct(ttmNi, last.equity) : null, num(m?.roeTTM)),
+    roa: crossCheck(last?.totalAssets ? ratioPct(ttmNi, last.totalAssets) : null, num(m?.roaTTM)),
+    // Facts carries this as a percentage; the provider reports a ratio, so it
+    // is scaled to match before the two are compared. Comparing 78 against
+    // 0.78 would flag every company as disputed.
+    debtToEquity: crossCheck(
+      debt !== null && last?.equity ? (debt / last.equity) * 100 : null,
+      (() => {
+        const r = num(m?.["totalDebt/totalEquityQuarterly"]);
+        return r === null ? null : r * 100;
+      })(),
+    ),
+    currentRatio: crossCheck(
+      last?.currentAssets && last?.currentLiabilities
+        ? last.currentAssets / last.currentLiabilities
+        : null,
+      num(m?.currentRatioQuarterly),
+      RATIO_TOLERANCE,
+    ),
+  } as const;
+
   return {
     symbol,
-    revenueGrowth: revGrowth,
-    epsGrowth: ttmGrowth(periods, (p) => p.eps) ?? num(m?.epsGrowthTTMYoy),
-    grossMargin: num(m?.grossMarginTTM) ?? ratioPct(ttm(periods, (p) => p.grossProfit), ttmRev),
-    operatingMargin:
-      num(m?.operatingMarginTTM) ?? ratioPct(ttm(periods, (p) => p.operatingIncome), ttmRev),
-    netMargin: num(m?.netProfitMarginTTM) ?? ratioPct(ttm(periods, (p) => p.netIncome), ttmRev),
+    agreement: Object.fromEntries(
+      Object.entries(checks).map(([k, v]) => [k, v.agreement]),
+    ) as Facts["agreement"],
+    disputes: Object.entries(checks)
+      .filter(([, v]) => v.agreement === "DISPUTED")
+      .map(([metric, v]) => ({ metric, filed: v.filed, reported: v.reported })),
+    revenueGrowth: checks.revenueGrowth.value,
+    epsGrowth: checks.epsGrowth.value,
+    grossMargin: checks.grossMargin.value,
+    operatingMargin: checks.operatingMargin.value,
+    netMargin: checks.netMargin.value,
     fcfMargin: fcfM,
     ruleOf40,
-    roe:
-      num(m?.roeTTM) ??
-      (last?.equity ? ratioPct(ttm(periods, (p) => p.netIncome), last.equity) : null),
-    roa:
-      num(m?.roaTTM) ??
-      (last?.totalAssets ? ratioPct(ttm(periods, (p) => p.netIncome), last.totalAssets) : null),
+    roe: checks.roe.value,
+    roa: checks.roa.value,
     roic: last ? roic(last, periods) : null,
     netCashToAssets:
       nc !== null && last?.totalAssets ? (nc / last.totalAssets) * 100 : null,
-    debtToEquity:
-      num(m?.["totalDebt/totalEquityQuarterly"]) ??
-      (debt !== null && last?.equity ? (debt / last.equity) * 100 : null),
-    currentRatio:
-      num(m?.currentRatioQuarterly) ??
-      (last?.currentAssets && last?.currentLiabilities
-        ? last.currentAssets / last.currentLiabilities
-        : null),
+    debtToEquity: checks.debtToEquity.value,
+    currentRatio: checks.currentRatio.value,
     equityToAssets:
       last?.equity != null && last?.totalAssets ? (last.equity / last.totalAssets) * 100 : null,
     interestCover: num(m?.netInterestCoverageTTM),

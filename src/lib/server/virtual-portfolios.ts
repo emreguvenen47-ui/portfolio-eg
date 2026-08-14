@@ -17,13 +17,41 @@ import { devCollection } from "./dev-store";
 
 export type TradeSide = "BUY" | "SELL";
 
+/**
+ * An option leg, when the trade is a contract rather than shares.
+ *
+ * Present only on option trades; a share trade leaves it undefined, so every
+ * ledger written before options existed still reads correctly.
+ *
+ * `multiplier` is stored rather than assumed. It is 100 for standard US
+ * equity options and the ledger would be wrong by two orders of magnitude if
+ * a non-standard contract were valued as though it were not.
+ */
+export interface OptionLeg {
+  /** OCC-style contract symbol, e.g. AAPL260814C00315000. */
+  contract: string;
+  type: "CALL" | "PUT";
+  strike: number;
+  /** yyyy-mm-dd. */
+  expiry: string;
+  /** Shares per contract. */
+  multiplier: number;
+}
+
 export interface Trade {
   id: string;
   ticker: string;
   side: TradeSide;
-  /** Shares. Always positive; `side` carries the direction. */
+  /**
+   * Shares, or contracts when `option` is set. Always positive; `side` carries
+   * the direction.
+   */
   quantity: number;
-  /** Execution price per share, in `currency`. */
+  /**
+   * Execution price per share, or premium per share for an option — not per
+   * contract. Quoted the way the chain quotes it, so the two never need
+   * reconciling; the multiplier turns it into cash.
+   */
   price: number;
   fees: number;
   currency: string;
@@ -31,7 +59,13 @@ export interface Trade {
   date: string;
   note: string;
   createdAt: string;
+  /** Set when this trade is an option contract rather than shares. */
+  option?: OptionLeg;
 }
+
+/** Cash a trade moves, respecting the contract multiplier. */
+export const tradeNotional = (t: Trade): number =>
+  t.quantity * t.price * (t.option?.multiplier ?? 1);
 
 export interface VirtualPortfolio {
   id: string;
@@ -154,7 +188,8 @@ export async function createVirtual(input: {
   // Seeding from an AI portfolio spends cash on the opening trades, so the
   // starting cash balance is what is left over rather than the full amount.
   const spent = trades.reduce(
-    (s, t) => s + (t.side === "BUY" ? t.quantity * t.price + t.fees : -(t.quantity * t.price - t.fees)),
+    (s, t) =>
+      s + (t.side === "BUY" ? tradeNotional(t) + t.fees : -(tradeNotional(t) - t.fees)),
     0,
   );
 
@@ -206,7 +241,7 @@ export async function deleteTrade(id: string, tradeId: string): Promise<VirtualP
   const trade = p.trades.find((t) => t.id === tradeId);
   if (!trade) return p;
 
-  const gross = trade.quantity * trade.price;
+  const gross = tradeNotional(trade as Trade);
   const cashDelta = trade.side === "BUY" ? gross + trade.fees : -(gross - trade.fees);
 
   return persist({

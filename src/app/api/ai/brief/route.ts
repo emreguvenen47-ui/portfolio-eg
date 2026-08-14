@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { AI_LIMIT, checkLimit, clientIdFrom, readJsonCapped } from "@/lib/server/rate-limit";
 import { getContext } from "@/lib/server/context";
-import { generateJson, isAiConfigured } from "@/lib/ai/client";
+import { generateJson, isAiConfigured, describeAiError } from "@/lib/ai/client";
 import { assessHealth } from "@/lib/portfolio/health";
 import { buildTheses } from "@/lib/portfolio/theses";
 import { fetchNews } from "@/lib/news/sources";
@@ -144,8 +144,8 @@ export async function POST(req: Request) {
     } satisfies DailyBrief);
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Brief generation failed" },
-      { status: 502 },
+      { error: describeAiError(e).message },
+      { status: describeAiError(e).status },
     );
   }
 }

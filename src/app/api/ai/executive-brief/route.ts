@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { AI_LIMIT, checkLimit, clientIdFrom, readJsonCapped } from "@/lib/server/rate-limit";
 import { z } from "zod";
-import { generateJson, isAiConfigured } from "@/lib/ai/client";
+import { generateJson, isAiConfigured, describeAiError } from "@/lib/ai/client";
 import { getQuotes, getHistories } from "@/lib/providers";
 import { getMetrics, getFinancials, getRecommendations, getInsiders } from "@/lib/providers/fundamentals";
 import { ordered, overview, earningsQuality } from "@/lib/research/statements";
@@ -48,12 +48,15 @@ const SCHEMA = {
     bullCase: SECTION,
     baseCase: SECTION,
     bearCase: SECTION,
-    topRisks: { type: "array", items: { type: "string" }, maxItems: 5 },
+    // Length limits live in the prompt, not here: the structured-output
+    // schema rejects `maxItems` on an array and returns a 400 for the whole
+    // request — which is why this endpoint failed on every call regardless of
+    // account balance.
+    topRisks: { type: "array", items: { type: "string" } },
     portfolioFit: SECTION,
     bottomLine: SECTION,
     sources: {
       type: "array",
-      maxItems: 8,
       items: {
         type: "object",
         properties: {
@@ -99,6 +102,7 @@ Rules that override everything else:
 - You have NO access to paywalled or private research. You may refer to publicly reported views from institutions such as Goldman Sachs or BlackRock ONLY where you genuinely recall a public report or widely-reported public comment, and you must say it is public and give the approximate period. If you have no genuine public view for this company, write that no specific public institutional view is available. Never invent a house call, a price target, or an attribution.
 - Every figure in the FACTS block is real and computed from filings and market data. Use those numbers; never contradict them and never invent new ones. If a figure is absent, say it is unavailable.
 - Label each entry in "sources": FACT for something taken from the FACTS block, SOURCE-DERIVED VIEW for something drawn from public reporting you genuinely recall, AI INFERENCE for your own reasoning.
+- "topRisks": at most five entries. "sources": at most eight. These are stated here rather than in the schema, which does not accept length limits.
 - The bull, base and bear cases must each be falsifiable and reference concrete drivers.
 - No buy or sell recommendation. This is analysis for the reader to act on themselves.
 - Be concise. Two to four sentences per section.`;
@@ -198,8 +202,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ brief: result, generatedAt: new Date().toISOString() });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Brief generation failed" },
-      { status: 500 },
+      { error: describeAiError(e).message },
+      { status: describeAiError(e).status },
     );
   }
 }

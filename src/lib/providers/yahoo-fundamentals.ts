@@ -36,7 +36,7 @@ const crumbCache = globalThis as unknown as Record<
 const CRUMB_TTL_MS = 60 * 60_000;
 
 /** Cookie-and-crumb handshake, reused for an hour. */
-async function getCrumb(): Promise<{ crumb: string; cookie: string } | null> {
+export async function getCrumb(): Promise<{ crumb: string; cookie: string } | null> {
   const hit = crumbCache[CRUMB_KEY];
   if (hit && Date.now() - hit.at < CRUMB_TTL_MS) return hit;
 

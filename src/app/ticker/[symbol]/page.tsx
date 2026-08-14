@@ -5,6 +5,7 @@ import { TickerChart } from "@/components/charts/ticker-chart";
 import { QuoteLine } from "@/components/shell/quote-line";
 import { getHistoricalPrices, getQuotes } from "@/lib/providers";
 import { getContext } from "@/lib/server/context";
+import { peekPortfolioForCaller } from "@/lib/server/user-portfolio";
 import { listPortfolios, currentAllocation } from "@/lib/server/ai-portfolios";
 import { fmtNum, fmtPct, fmtPctPoints, fmtUsd } from "@/lib/format";
 import { technicalState } from "@/lib/portfolio/alert-engine";
@@ -98,11 +99,46 @@ export default async function TickerPage(props: PageProps<"/ticker/[symbol]">) {
   const { symbol: raw } = await props.params;
   const symbol = decodeURIComponent(raw).toUpperCase();
 
+  /**
+   * A deadline per source, so one slow provider cannot hold the page.
+   *
+   * Measured: most cold ticker pages land in three to four seconds, but a
+   * provider that times out and retries took one to twenty-six. A panel whose
+   * source did not answer in time reads N/A — which is what it already reads
+   * when a source has no data — rather than making everything else wait for it.
+   *
+   * The price and the filings get longer, because a page without them is not
+   * worth rendering. Everything else is a side panel.
+   */
+  const within = <T,>(ms: number, p: Promise<T>, fallback: T): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+    ]);
+
+  const CORE_MS = 12_000;
+  const PANEL_MS = 5_000;
+
+  /**
+   * One wave, not five.
+   *
+   * These sources are independent of each other, and awaiting them in groups
+   * meant the page took the sum of the slowest in each group rather than the
+   * slowest overall — measured at 2.2s to 7.4s on a warm cache. Only the
+   * Yahoo statement fallback genuinely depends on an earlier result, so it is
+   * the one thing left in a second wave.
+   *
+   * `getContext()` is deliberately absent. It builds the whole portfolio
+   * market bundle — quotes and history for every position, plus the risk
+   * report — and this page used it to answer one question: do I hold this?
+   * That question is answered below from the holdings list alone, and the
+   * bundle is only built when the answer is yes.
+   */
   const [
     quotes,
     history,
-    ctx,
     saved,
+    heldPortfolio,
     metrics,
     financials,
     annualFinancials,
@@ -110,31 +146,41 @@ export default async function TickerPage(props: PageProps<"/ticker/[symbol]">) {
     earnings,
     insiders,
     guidance,
+    ownership,
+    etfLookup,
+    holdings,
+    contracts,
+    hiring,
+    catalysts,
   ] = await Promise.all([
-    getQuotes([symbol]),
+    within(CORE_MS, getQuotes([symbol]), {} as Awaited<ReturnType<typeof getQuotes>>),
     getHistoricalPrices(symbol, 1300),
-    getContext().catch(() => null),
-    listPortfolios().catch(() => []),
+    within(PANEL_MS, listPortfolios().catch(() => []), []),
+    within(PANEL_MS, peekPortfolioForCaller().catch(() => null), null),
     // Fundamentals are cached for a day in the provider layer, so this costs
     // nothing on a repeat view and never rides the quote clock.
-    getMetrics(symbol).catch(() => null),
-    getFinancials(symbol).catch(() => null),
-    getAnnualFinancials(symbol).catch(() => null),
-    getRecommendations(symbol).catch(() => null),
-    getEarnings(symbol).catch(() => null),
-    getInsiders(symbol).catch(() => null),
-    getGuidance(symbol).catch(() => null),
-  ]);
-
-  const [ownership, etfLookup, holdings] = await Promise.all([
-    getOwnership(symbol).catch(() => null),
+    within(CORE_MS, getMetrics(symbol).catch(() => null), null),
+    within(CORE_MS, getFinancials(symbol).catch(() => null), null),
+    within(CORE_MS, getAnnualFinancials(symbol).catch(() => null), null),
+    within(PANEL_MS, getRecommendations(symbol).catch(() => null), null),
+    within(PANEL_MS, getEarnings(symbol).catch(() => null), null),
+    within(PANEL_MS, getInsiders(symbol).catch(() => null), null),
+    within(PANEL_MS, getGuidance(symbol).catch(() => null), null),
+    within(PANEL_MS, getOwnership(symbol).catch(() => null), null),
     // The reverse lookup only scans funds we would have holdings for; with no
     // source registered it short-circuits and the panel says N/A.
-    reverseLookup(symbol, ["SPY", "QQQ", "SMH", "XLK", "VGK", "RSP", "XLI", "XLF"]).catch(() => ({
-      available: false,
-      rows: [] as { etf: string; weight: number; rank: number; aum: number | null }[],
-    })),
-    getHoldings(symbol).catch(() => null),
+    within(
+      PANEL_MS,
+      reverseLookup(symbol, ["SPY", "QQQ", "SMH", "XLK", "VGK", "RSP", "XLI", "XLF"]).catch(() => ({
+        available: false,
+        rows: [] as { etf: string; weight: number; rank: number; aum: number | null }[],
+      })),
+      { available: false, rows: [] as { etf: string; weight: number; rank: number; aum: number | null }[] },
+    ),
+    within(PANEL_MS, getHoldings(symbol).catch(() => null), null),
+    within(PANEL_MS, getContracts(symbol).catch(() => []), []),
+    within(PANEL_MS, getHiring(symbol).catch(() => null), null),
+    within(PANEL_MS, getCatalysts(symbol).catch(() => []), []),
   ]);
 
   // Symbols the SEC feed does not cover — BIST above all — get their filed
@@ -142,14 +188,18 @@ export default async function TickerPage(props: PageProps<"/ticker/[symbol]">) {
   // de-cumulation the SEC path needs is deliberately not applied.
   const altStatements = financials?.length
     ? null
-    : await getYahooStatements(symbol).catch(() => null);
+    : await within(PANEL_MS, getYahooStatements(symbol).catch(() => null), null);
 
-  const [contracts, hiring] = await Promise.all([
-    getContracts(symbol).catch(() => []),
-    getHiring(symbol).catch(() => null),
-  ]);
-
-  const catalysts = await getCatalysts(symbol).catch(() => []);
+  /**
+   * The valuation panel needs the full context, so build it — but only for a
+   * symbol actually in the book. For every other ticker that work produced a
+   * `find` that returned undefined.
+   */
+  const isHeld = (heldPortfolio?.positions ?? []).some(
+    (p) =>
+      p.code.toUpperCase() === symbol || (p.symbol ?? "").toUpperCase() === symbol,
+  );
+  const ctx = isHeld ? await getContext({ markets: false }).catch(() => null) : null;
 
   const quote = quotes[symbol] ?? null;
   const candles = history.candles;

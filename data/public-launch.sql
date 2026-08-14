@@ -9,6 +9,9 @@
 --   3. data/alerts.sql
 --   4. data/job-snapshots.sql
 --   5. data/saved-screens.sql
+--   6. data/auth-multiuser.sql    -- user_id + row-level policies
+--   7. data/user-tables.sql       -- settings and portfolios, per account
+--   8. data/market-cache.sql      -- shared, durable scanner/screener cache
 --
 -- Every one of them ends with an explicit grant to service_role. Row-level
 -- security is enabled with no policy, which refuses *every* request including

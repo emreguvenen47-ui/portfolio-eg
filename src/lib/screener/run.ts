@@ -3,7 +3,7 @@ import { getHistories } from "@/lib/providers";
 import { enqueue, queueDepth } from "@/lib/server/warm-queue";
 import { loadScreenerUniverse } from "@/lib/scanner/screener-universe";
 import { eligible, type PoolFilters } from "@/lib/scanner/engine";
-import { enrichRow, cachedRow, hasRow } from "./enrich";
+import { enrichRow, cachedRow, hasRow, rowCacheReady } from "./enrich";
 import {
   buildAggregates,
   evaluateScreen,
@@ -74,7 +74,10 @@ export async function runScreen(
   pool: PoolFilters,
   screen: Screen,
 ): Promise<ScreenResponse> {
-  const universe = await loadScreenerUniverse().catch(() => []);
+  const [universe] = await Promise.all([
+    loadScreenerUniverse().catch(() => []),
+    rowCacheReady(),
+  ]);
   const candidates = eligible(universe, pool);
 
   // Benchmark once, for relative strength on every row.

@@ -16,7 +16,7 @@ import {
   type Weights,
 } from "./score";
 import { fairValue, type FairValue } from "./fair-value";
-import { diskCache } from "@/lib/server/disk-cache";
+import { sharedCache } from "@/lib/server/shared-cache";
 import { enqueue, queueDepth } from "@/lib/server/warm-queue";
 import { loadScreenerUniverse, type UniverseRow } from "./screener-universe";
 import { sweepUniverse, sweepable, USER_PRIORITY_BASE } from "./universe-warmer";
@@ -147,7 +147,7 @@ const CAND_TTL_MS = 24 * 60 * 60_000;
  * empty table — coverage never accumulated. On disk it survives, and the
  * background warmer picks up where it left off.
  */
-const candCache = diskCache<Candidate | null>("scanner-candidates", CAND_TTL_MS);
+const candCache = sharedCache<Candidate | null>("scanner", CAND_TTL_MS);
 
 /**
  * How many uncached symbols one request hands to the background queue.
@@ -269,7 +269,13 @@ export async function runScan(
   filters: PoolFilters = DEFAULT_POOL,
   weights: Weights = DEFAULT_WEIGHTS,
 ): Promise<ScanResponse> {
-  const universe = await loadScreenerUniverse().catch(() => []);
+  // Pull the shared cache into memory once per process before anything reads
+  // it; otherwise a cold instance reports zero coverage and re-queues work
+  // that is already done.
+  const [universe] = await Promise.all([
+    loadScreenerUniverse().catch(() => []),
+    candCache.ready(),
+  ]);
   const pool = eligible(universe, filters);
 
   /**

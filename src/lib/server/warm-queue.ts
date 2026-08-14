@@ -1,4 +1,5 @@
 import "server-only";
+import { asBackground } from "@/lib/providers/fundamentals";
 
 /**
  * Background enrichment queue.
@@ -97,7 +98,9 @@ async function drain(): Promise<void> {
       await Promise.all(
         batch.map(async (t) => {
           try {
-            await t.run();
+            // Marks every provider call this task makes as background, so it
+            // yields the rate limiter to anything a person is waiting on.
+            await asBackground(() => t.run().then(() => undefined));
             q.completed++;
           } catch {
             // A task that fails leaves no cache entry, so the next request

@@ -3,6 +3,8 @@ import type { Portfolio } from "@/lib/types";
 import { loadPortfolio, peekPortfolio, setPortfolio } from "@/lib/portfolio/load";
 import { ownerClient, ownerOrRefuse } from "./auth";
 import { buildSamplePortfolio } from "@/lib/portfolio/starter";
+import { portfolioFromPaper } from "@/lib/portfolio/from-paper";
+import { listVirtual } from "./virtual-portfolios";
 
 /**
  * The signed-in account's portfolio.
@@ -50,13 +52,13 @@ export async function loadPortfolioForCaller(): Promise<Portfolio> {
     try {
       return await loadPortfolio();
     } catch {
-      return buildSamplePortfolio();
+      return fallbackPortfolio();
     }
   }
 
   const hit = cache.get(owner.userId);
   if (hit && Date.now() - hit.at < TTL_MS) {
-    return hit.value ?? buildSamplePortfolio();
+    return hit.value ?? (await fallbackPortfolio());
   }
 
   let value: Portfolio | null = null;
@@ -81,16 +83,31 @@ export async function loadPortfolioForCaller(): Promise<Portfolio> {
 
   cache.set(owner.userId, { at: Date.now(), value });
 
-  /**
-   * A new account gets the sample rather than an error.
-   *
-   * Overview, Markets, Risk and the rest are only meaningful with holdings in
-   * them, and an empty terminal tells a first-time visitor nothing about what
-   * the app does. The sample is never persisted and never counted as an
-   * upload — it is replaced the moment a real workbook arrives — and every
-   * page that renders it shows the banner saying so.
-   */
-  return value ?? buildSamplePortfolio();
+  return value ?? (await fallbackPortfolio());
+}
+
+/**
+ * What to show when no workbook has been uploaded.
+ *
+ * The order is the point. A paper-trading ledger the user built themselves
+ * beats a sample every time — showing them an invented allocation while their
+ * own book sits one page away reads as the app ignoring their work. The
+ * sample is the last resort, for an account that has done nothing yet, and
+ * exists only so Overview, Markets and Risk are not blank on a first visit.
+ *
+ * Neither is persisted, and both are replaced the moment a workbook arrives.
+ */
+async function fallbackPortfolio(): Promise<Portfolio> {
+  const books = await listVirtual().catch(() => []);
+
+  // Most recently touched ledger that actually holds something.
+  const ordered = [...books].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  for (const b of ordered) {
+    const derived = portfolioFromPaper(b);
+    if (derived) return derived;
+  }
+
+  return buildSamplePortfolio();
 }
 
 /** Persist after an upload, for whoever uploaded it. */

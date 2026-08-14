@@ -119,6 +119,7 @@ data/job-snapshots.sql
 data/saved-screens.sql
 data/auth-multiuser.sql      ← adds user_id + RLS policies
 data/user-tables.sql         ← settings and portfolios, per account
+data/market-cache.sql        ← keeps scanner coverage across deploys
 ```
 
 The last two are what make this safe to share. `auth-multiuser.sql` ends with a
@@ -181,10 +182,10 @@ holds the data.
 provider calls, so the listing fills in as the app is used — roughly fourteen
 companies a minute on the Finnhub free tier. The header shows the count.
 
-**That progress does not survive a redeploy.** Vercel's filesystem is
-read-only apart from `/tmp`, which is per-instance and disappears with it, so
-the cache rebuilds after each deploy. Nothing breaks; the table is just thin
-for a while. Account data is in Supabase and is unaffected.
+**That progress is kept in Supabase**, in `market_cache`, so it survives
+deploys and instance recycling. Skip `data/market-cache.sql` and the cache
+falls back to `/tmp`, which belongs to one serverless instance and is wiped on
+every deploy — that is what sends the coverage counter back to zero.
 
 **Provider failures degrade rather than crash.** Each source has a timeout and
 a fallback chain; anything unavailable is shown as unavailable with a reason.

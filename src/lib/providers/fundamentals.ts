@@ -1,4 +1,5 @@
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { finnhubKey } from "./finnhub";
 
 /**
@@ -69,9 +70,38 @@ async function cached<T>(key: string, load: () => Promise<T>): Promise<T | null>
  * burst cannot all leave at once.
  */
 const LIMIT_KEY = Symbol.for("pcc.finnhub.limiter");
-const limiter: { window: number[]; active: number } = ((
-  globalThis as unknown as Record<symbol, { window: number[]; active: number }>
-)[LIMIT_KEY] ??= { window: [], active: 0 });
+interface LimiterState {
+  window: number[];
+  active: number;
+  foregroundWaiting: number;
+  /** When a foreground call last took a slot. */
+  lastForegroundAt: number;
+}
+
+const limiter: LimiterState = ((globalThis as unknown as Record<symbol, LimiterState>)[
+  LIMIT_KEY
+] ??= { window: [], active: 0, foregroundWaiting: 0, lastForegroundAt: 0 });
+
+/**
+ * Which requests may take a slot while somebody is waiting on a page.
+ *
+ * The background sweep assembles the whole listing, which means it always has
+ * work and will always be asking. Sharing one FIFO queue with page requests
+ * let it hold every slot: a ticker page for a company nobody had viewed went
+ * from under five seconds to thirty-five, because the user's four calls sat
+ * behind the sweep's.
+ *
+ * So the sweep yields. It is marked background through this store, and it
+ * waits while any foreground call is queued. Nothing is dropped — the sweep
+ * simply runs in the gaps, which is what a background task is for.
+ */
+const backgroundFlag = new AsyncLocalStorage<boolean>();
+
+/** Run `fn` with its provider calls marked as background work. */
+export const asBackground = <T>(fn: () => Promise<T>): Promise<T> =>
+  backgroundFlag.run(true, fn);
+
+const isBackground = (): boolean => backgroundFlag.getStore() === true;
 
 /** Upstream calls actually issued, for the status probe and for benchmarking. */
 const COUNT_KEY = Symbol.for("pcc.finnhub.calls");
@@ -83,6 +113,27 @@ export const upstreamCallCount = (): number => counter.n;
 
 const PER_MINUTE = 55;
 const MAX_CONCURRENT = 5;
+
+/**
+ * The share of the minute background work may consume.
+ *
+ * Yielding the concurrency slot was not enough on its own: the sweep always
+ * has work, so it kept the rolling window full and a page request waited for
+ * the window to roll rather than for a slot — a cold ticker page measured 23
+ * to 35 seconds with the sweep running. Reserving the difference means a
+ * person's six or seven calls always have somewhere to go.
+ */
+const BACKGROUND_PER_MINUTE = 28;
+
+/**
+ * How long the sweep stands down after a page request touches the provider.
+ *
+ * A budget alone still let the two interleave, and a page needing seven calls
+ * could find the window filled between its own. While somebody is actively
+ * moving around the app the sweep simply stops; it resumes a few seconds after
+ * they go quiet. Coverage is a background concern and can wait, a page cannot.
+ */
+const QUIET_AFTER_FOREGROUND_MS = 4_000;
 /**
  * A hung connection must not hold a queue slot open forever. Fifteen seconds
  * is well past this endpoint's normal response and well short of a user
@@ -93,18 +144,45 @@ const TIMEOUT_MS = 15_000;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function acquire(): Promise<void> {
-  for (;;) {
-    const now = Date.now();
-    limiter.window = limiter.window.filter((t) => now - t < 60_000);
-    if (limiter.window.length < PER_MINUTE && limiter.active < MAX_CONCURRENT) {
-      limiter.window.push(now);
-      limiter.active++;
-      return;
+  const background = isBackground();
+  if (!background) limiter.foregroundWaiting++;
+
+  try {
+    for (;;) {
+      const now = Date.now();
+      limiter.window = limiter.window.filter((t) => now - t < 60_000);
+
+      const budget = background ? BACKGROUND_PER_MINUTE : PER_MINUTE;
+      const hasRoom = limiter.window.length < budget && limiter.active < MAX_CONCURRENT;
+      // Background work also steps aside for anything a person is waiting on,
+      // and leaves a concurrency slot spare so a foreground call arriving
+      // mid-flight is not stuck behind a full window.
+      const quiet = now - limiter.lastForegroundAt > QUIET_AFTER_FOREGROUND_MS;
+      const mayGo = background
+        ? hasRoom &&
+          quiet &&
+          limiter.foregroundWaiting === 0 &&
+          limiter.active < MAX_CONCURRENT - 1
+        : hasRoom;
+
+      if (mayGo) {
+        limiter.window.push(now);
+        limiter.active++;
+        if (!background) limiter.lastForegroundAt = now;
+        return;
+      }
+
+      const oldest = limiter.window[0];
+      const wait =
+        limiter.window.length >= PER_MINUTE
+          ? Math.max(50, 60_000 - (now - oldest))
+          : background
+            ? 250
+            : 40;
+      await sleep(Math.min(wait, 2_000));
     }
-    const oldest = limiter.window[0];
-    const wait =
-      limiter.window.length >= PER_MINUTE ? Math.max(50, 60_000 - (now - oldest)) : 40;
-    await sleep(Math.min(wait, 2_000));
+  } finally {
+    if (!background) limiter.foregroundWaiting--;
   }
 }
 

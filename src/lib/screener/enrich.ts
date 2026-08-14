@@ -7,7 +7,7 @@ import { scoreQuality } from "@/lib/portfolio/quality-score";
 import { buildFacts } from "@/lib/scanner/metrics";
 import type { UniverseRow } from "@/lib/scanner/screener-universe";
 import type { Candle } from "@/lib/types";
-import { diskCache } from "@/lib/server/disk-cache";
+import { sharedCache } from "@/lib/server/shared-cache";
 import type { Row } from "./metrics";
 
 /**
@@ -47,7 +47,7 @@ interface CacheEntry {
  * from an empty table every session. The entry keeps its own timestamp so the
  * provisional/final distinction survives the round trip.
  */
-const cache = diskCache<CacheEntry>("screener-rows", CACHE_TTL_MS);
+const cache = sharedCache<CacheEntry>("screener", CACHE_TTL_MS);
 
 const fresh = (e: CacheEntry): boolean =>
   Date.now() - e.at < (e.provisional ? PROVISIONAL_TTL_MS : CACHE_TTL_MS);
@@ -262,3 +262,6 @@ export const hasRow = (symbol: string): boolean => {
   return e !== undefined && fresh(e);
 };
 export const rowCacheSize = (): number => cache.size();
+
+/** Hydrate the shared cache before the synchronous readers below are used. */
+export const rowCacheReady = (): Promise<void> => cache.ready();

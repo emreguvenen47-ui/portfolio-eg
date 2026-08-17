@@ -57,9 +57,26 @@ export interface ETFHoldingsSource {
   holdings(symbol: string): Promise<{ profile: ETFProfile; holdings: Holding[] } | null>;
 }
 
-const SOURCES: ETFHoldingsSource[] = [];
+/**
+ * Registered sources, on globalThis.
+ *
+ * A plain module array does not survive here: Next hands Server Components and
+ * Route Handlers separate instances of the same module, so registration ran in
+ * one copy and every lookup read an empty array in another. The symptom was a
+ * source that worked perfectly when called directly and reported "not
+ * configured" through the normal path — which reads as missing data rather
+ * than as a wiring fault.
+ */
+const SOURCES_KEY = Symbol.for("pcc.etfHoldings.sources");
+const SOURCES: ETFHoldingsSource[] = ((globalThis as unknown as Record<symbol, ETFHoldingsSource[]>)[
+  SOURCES_KEY
+] ??= []);
 
 export function registerHoldingsSource(s: ETFHoldingsSource): void {
+  // Registration now runs once per module instance rather than once per
+  // process, so the same source arrives more than once. Keyed by name so a
+  // second copy replaces rather than duplicates.
+  if (SOURCES.some((x) => x.name === s.name)) return;
   SOURCES.push(s);
 }
 

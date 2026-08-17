@@ -1,4 +1,5 @@
 import "server-only";
+import { buildResolver, resolveHolding, seedCusips } from "./cusip-resolve";
 import type {
   InstitutionalHolder,
   OwnershipBreakdown,
@@ -40,7 +41,10 @@ const cache: Map<string, { at: number; value: ManagerFiling[] }> = ((
 /** Managers whose filings are ingested. Large, long-lived, widely followed. */
 export const TRACKED_MANAGERS: { cik: string; name: string }[] = [
   { cik: "0001067983", name: "Berkshire Hathaway" },
-  { cik: "0001364742", name: "BlackRock" },
+  // BlackRock files under a new entity from late 2024; the old CIK
+  // (0001364742, "BlackRock Finance") stopped at 2024-06-30 and was quietly
+  // serving two-year-old holdings next to current ones.
+  { cik: "0002012383", name: "BlackRock" },
   { cik: "0000102909", name: "Vanguard Group" },
   { cik: "0000093751", name: "State Street" },
   { cik: "0001350694", name: "Bridgewater Associates" },
@@ -58,6 +62,21 @@ export interface Holding {
   cusip: string;
   value: number;
   shares: number;
+}
+
+/**
+ * How far behind the newest filing a holder's own filing is.
+ *
+ * Managers file under entities that change, and a filer that has stopped
+ * filing keeps returning its last snapshot forever. Two-year-old holdings
+ * shown beside this quarter's, with no marking, read as current.
+ */
+export function quartersBehind(period: string, newest: string): number {
+  const q = (d: string) => {
+    const [y, m] = d.split("-").map(Number);
+    return y * 4 + Math.floor((m - 1) / 3);
+  };
+  return Math.max(0, q(newest) - q(period));
 }
 
 export interface ManagerFiling {
@@ -233,11 +252,32 @@ const CUSIP_TO_TICKER: Record<string, string> = {
   "654106103": "NKE",
 };
 
+/**
+ * Kept as the authoritative overrides, seeded into the resolver.
+ *
+ * Hand-verified pairings win over a name match, so a company whose listing
+ * name differs from its filing name in a way normalisation cannot bridge can
+ * still be pinned here.
+ */
+seedCusips(CUSIP_TO_TICKER);
+
 export const cusipToTicker = (cusip: string): string | null =>
   CUSIP_TO_TICKER[cusip.toUpperCase()] ?? null;
 
+/**
+ * Ticker for a holding, using the issuer name when the CUSIP is unknown.
+ *
+ * Prefer this over `cusipToTicker`: the hand-written map covers forty
+ * companies, and a large manager files forty thousand rows.
+ */
+export const holdingTicker = (cusip: string, issuer: string): string | null =>
+  resolveHolding(cusip, issuer);
+
 /** Ingest every tracked manager. Sequential, to stay polite with EDGAR. */
 export async function loadTrackedFilings(): Promise<ManagerFiling[]> {
+  // The resolver needs the listing; building it here means every caller gets
+  // name matching without having to remember to ask for it.
+  await buildResolver();
   const out: ManagerFiling[] = [];
   for (const m of TRACKED_MANAGERS) {
     const filings = await fetchManager(m.cik, m.name).catch(() => []);
@@ -267,11 +307,28 @@ export const sec13fSource: OwnershipSource = {
       const prior = sorted[1];
       if (!latest) continue;
 
-      const find = (f: ManagerFiling) =>
-        f.holdings.find((h) => cusipToTicker(h.cusip) === target);
+      /**
+       * A 13F splits one position across several rows.
+       *
+       * The information table is broken out by investment discretion and by
+       * the managers sharing voting authority, so Berkshire's Apple stake
+       * arrives as six lines. Reading the first — which `find` did — reported
+       * 692,000 shares against a real position near 57 million, an
+       * understatement of two orders of magnitude that looked like a plausible
+       * small holding. Every row for the CUSIP is summed.
+       */
+      const total = (f: ManagerFiling) => {
+        const rows = f.holdings.filter((h) => holdingTicker(h.cusip, h.issuer) === target);
+        if (rows.length === 0) return null;
+        return {
+          shares: rows.reduce((s, h) => s + h.shares, 0),
+          value: rows.reduce((s, h) => s + h.value, 0),
+          rows: rows.length,
+        };
+      };
 
-      const now = find(latest);
-      const then = prior ? find(prior) : undefined;
+      const now = total(latest);
+      const then = prior ? total(prior) : null;
       // Absent from the latest filing and absent from the prior one means the
       // manager simply does not hold it — not a sale.
       if (!now && !then) continue;

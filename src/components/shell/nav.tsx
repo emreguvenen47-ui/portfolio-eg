@@ -30,6 +30,7 @@ import {
   Wallet,
   Sparkles,
   Target,
+  PieChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,7 @@ const NAV = [
   { href: "/opportunities", label: "Opportunities", icon: Radar },
   { href: "/screener", label: "Custom Screener", icon: Filter },
   { href: "/rotation", label: "Sector Flows", icon: Shuffle },
+  { href: "/funds", label: "Fund 13F", icon: PieChart },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/positions", label: "Positions", icon: ListTree },
   { href: "/risk", label: "Risk", icon: Gauge },

@@ -1,9 +1,12 @@
 import "server-only";
+import { cachedScreenerUniverse } from "@/lib/scanner/screener-universe";
+import { detectSplit, findSuccessions } from "./corporate-actions";
 import {
   holdingTicker,
   loadTrackedFilings,
   quartersBehind,
   TRACKED_MANAGERS,
+  type FilerKind,
   type ManagerFiling,
 } from "@/lib/providers/sec-13f";
 
@@ -43,6 +46,15 @@ export interface FundPosition {
 export interface FundSnapshot {
   cik: string;
   manager: string;
+  kind: FilerKind;
+  /**
+   * Weight of the single largest holding.
+   *
+   * The number that separates a portfolio from a strategic stake: a fund's
+   * biggest position is a few percent, Alphabet's is 95%. Surfaced so the
+   * concentration is visible without reading the table.
+   */
+  topWeight: number;
   period: string;
   filedAt: string;
   /** Quarters behind the most recent filing among all tracked managers. */
@@ -182,6 +194,8 @@ export async function fundPositioning(): Promise<{
     funds.push({
       cik,
       manager: latest.manager,
+      kind: latest.kind,
+      topWeight: byValue[0]?.weight ?? 0,
       period: latest.reportPeriod,
       filedAt: latest.filedAt,
       staleQuarters: newestPeriod ? quartersBehind(latest.reportPeriod, newestPeriod) : 0,
@@ -206,4 +220,283 @@ export async function fundPositioning(): Promise<{
     newestPeriod,
     trackedCount: TRACKED_MANAGERS.length,
   };
+}
+
+// ------------------------------------------------------------- company flow
+
+/**
+ * The prior quarter, restated so it can be compared with this one.
+ *
+ * Splits are folded into the share count and CUSIP successions are merged into
+ * the surviving identifier. Without this the ranking is led by artefacts: a
+ * five-for-one split reads as a 935% purchase and a spinoff reads as every
+ * holder liquidating at once.
+ */
+function restatePrior(
+  prior: Map<string, { issuer: string; value: number; shares: number }>,
+  now: Map<string, { issuer: string; value: number; shares: number }>,
+): { restated: Map<string, { issuer: string; value: number; shares: number }>; actions: number } {
+  const restated = new Map<string, { issuer: string; value: number; shares: number }>(
+    [...prior.entries()].map(([c, v]) => [c, { ...v }]),
+  );
+  let actions = 0;
+
+  // Splits: scale the prior share count onto the current basis.
+  for (const [cusip, before] of restated) {
+    const after = now.get(cusip);
+    if (!after) continue;
+    const { factor, detected } = detectSplit(before, after);
+    if (detected) {
+      before.shares *= factor;
+      actions++;
+    }
+  }
+
+  // Successions: move the old holding onto the new identifier(s), split by
+  // the successors' share of the new value so a two-way spinoff nets to zero
+  // rather than to a purchase and a sale.
+  for (const s of findSuccessions(restated, now)) {
+    const oldCusip = s.from[0];
+    const old = restated.get(oldCusip);
+    if (!old) continue;
+    const targets = s.to.map((c) => ({ c, r: now.get(c)! })).filter((t) => t.r);
+    const totalValue = targets.reduce((sum, t) => sum + t.r.value, 0);
+    if (totalValue <= 0) continue;
+
+    for (const t of targets) {
+      const share = t.r.value / totalValue;
+      const existing = restated.get(t.c);
+      const carried = {
+        issuer: t.r.issuer,
+        value: old.value * share,
+        // The successor's own share count is the right basis: the old count
+        // was in units of a security that no longer exists.
+        shares: t.r.shares,
+      };
+      restated.set(
+        t.c,
+        existing
+          ? { issuer: existing.issuer, value: existing.value + carried.value, shares: existing.shares + carried.shares }
+          : carried,
+      );
+    }
+    restated.delete(oldCusip);
+    actions++;
+  }
+
+  return { restated, actions };
+}
+
+export interface CompanyFlow {
+  ticker: string | null;
+  issuer: string;
+  cusip: string;
+  /** Managers who increased or opened, and who cut or exited. */
+  buyers: string[];
+  sellers: string[];
+  /** Net shares added across every manager that filed both quarters. */
+  netShares: number;
+  /** Net shares as a share of the prior quarter's combined holding. */
+  netPct: number | null;
+  /** Combined reported value this quarter. */
+  value: number;
+  /** Managers holding it at all. */
+  holders: number;
+  /** Managers who opened a position that did not exist last quarter. */
+  opened: number;
+  /** Managers who sold out entirely. */
+  closed: number;
+  /**
+   * Every holder exited and the ticker is no longer in the listing.
+   *
+   * That is the shape of an acquisition or a delisting, not of a decision.
+   * Ranking it as "most sold" would put a cash takeover at the top of a list
+   * meant to show what managers chose to do.
+   */
+  likelyDelisted: boolean;
+}
+
+export interface FlowReport {
+  bought: CompanyFlow[];
+  sold: CompanyFlow[];
+  period: string | null;
+  /** Managers whose filings could be compared quarter on quarter. */
+  comparable: number;
+  skippedStale: string[];
+  /** Splits and CUSIP successions folded out of the comparison. */
+  corporateActions: number;
+  /** Names dropped from the sold list because they left the market entirely. */
+  delisted: CompanyFlow[];
+}
+
+const TOP_FLOW = 20;
+
+/**
+ * Which companies the tracked managers moved into and out of last quarter.
+ *
+ * Aggregated across managers, netted by share count rather than by value: a
+ * position can gain value without anybody buying a share of it, and counting
+ * that as accumulation would turn a rising market into a wave of buying.
+ *
+ * Only managers who filed BOTH of the two most recent quarters are counted.
+ * One who has stopped filing would otherwise appear to have sold everything
+ * the moment their last filing aged out — an artefact that would dominate the
+ * sold list with fictitious liquidations.
+ *
+ * Corporate filers are excluded. Four operating companies holding a dozen
+ * strategic stakes between them are not part of "what funds did", and
+ * Alphabet's single 95% position would swamp any ranking it entered.
+ */
+export async function companyFlow(): Promise<FlowReport> {
+  const filings = await loadTrackedFilings();
+  if (filings.length === 0) {
+    return {
+      bought: [], sold: [], period: null, comparable: 0,
+      skippedStale: [], corporateActions: 0, delisted: [],
+    };
+  }
+
+  const period =
+    [...filings].sort((a, b) => b.reportPeriod.localeCompare(a.reportPeriod))[0]?.reportPeriod ??
+    null;
+
+  const byManager = new Map<string, ManagerFiling[]>();
+  for (const f of filings) {
+    if (f.kind !== "manager") continue;
+    byManager.set(f.cik, [...(byManager.get(f.cik) ?? []), f]);
+  }
+
+  interface Agg {
+    issuer: string;
+    buyers: Set<string>;
+    sellers: Set<string>;
+    net: number;
+    priorTotal: number;
+    value: number;
+    holders: Set<string>;
+    opened: number;
+    closed: number;
+  }
+  const agg = new Map<string, Agg>();
+  const slot = (cusip: string, issuer: string): Agg => {
+    let a = agg.get(cusip);
+    if (!a) {
+      a = {
+        issuer,
+        buyers: new Set(),
+        sellers: new Set(),
+        net: 0,
+        priorTotal: 0,
+        value: 0,
+        holders: new Set(),
+        opened: 0,
+        closed: 0,
+      };
+      agg.set(cusip, a);
+    }
+    return a;
+  };
+
+  let comparable = 0;
+  let corporateActions = 0;
+  const skippedStale: string[] = [];
+
+  for (const [, list] of byManager) {
+    const sorted = [...list].sort((a, b) => b.reportPeriod.localeCompare(a.reportPeriod));
+    const latest = sorted[0];
+    const prior = sorted[1];
+    if (!latest || !prior) continue;
+
+    // A manager who has not filed the newest quarter cannot have moved in it.
+    if (period && latest.reportPeriod !== period) {
+      skippedStale.push(latest.manager);
+      continue;
+    }
+    comparable++;
+
+    const now = net(latest);
+    const { restated: before, actions } = restatePrior(net(prior), now);
+    corporateActions += actions;
+
+    for (const [cusip, x] of now) {
+      const a = slot(cusip, x.issuer);
+      a.value += x.value;
+      a.holders.add(latest.manager);
+
+      const was = before.get(cusip)?.shares ?? 0;
+      a.priorTotal += was;
+      const delta = x.shares - was;
+      a.net += delta;
+
+      if (was === 0) {
+        a.opened++;
+        a.buyers.add(latest.manager);
+      } else if (delta / was > 0.01) {
+        a.buyers.add(latest.manager);
+      } else if (delta / was < -0.01) {
+        a.sellers.add(latest.manager);
+      }
+    }
+
+    // Positions that vanished are the ones worth catching.
+    for (const [cusip, x] of before) {
+      if (now.has(cusip)) continue;
+      const a = slot(cusip, x.issuer);
+      a.priorTotal += x.shares;
+      a.net -= x.shares;
+      a.closed++;
+      a.sellers.add(latest.manager);
+    }
+  }
+
+  const listed = new Set(
+    cachedScreenerUniverse()
+      .filter((r) => r.region === "US")
+      .map((r) => r.symbol),
+  );
+
+  const rows: CompanyFlow[] = [...agg.entries()].map(([cusip, a]) => {
+    const ticker = holdingTicker(cusip, a.issuer);
+    return {
+    ticker,
+    issuer: a.issuer,
+    cusip,
+    buyers: [...a.buyers],
+    sellers: [...a.sellers],
+    netShares: a.net,
+    netPct: a.priorTotal > 0 ? (a.net / a.priorTotal) * 100 : null,
+    value: a.value,
+    holders: a.holders.size,
+    opened: a.opened,
+    closed: a.closed,
+    // Only claimed when the listing is loaded; an empty listing would mark
+    // everything as delisted.
+    likelyDelisted:
+      listed.size > 0 && a.holders.size === 0 && a.closed > 0 && (!ticker || !listed.has(ticker)),
+    };
+  });
+
+  /**
+   * Ranked by share count moved, not by percentage.
+   *
+   * A manager opening a $2M position in something illiquid is an infinite
+   * percentage increase and no information. Absolute shares favour the
+   * companies where real size changed hands.
+   */
+  const bought = rows
+    .filter((r) => r.netShares > 0 && r.buyers.length > 0)
+    .sort((a, b) => b.netShares - a.netShares)
+    .slice(0, TOP_FLOW);
+
+  const sold = rows
+    .filter((r) => r.netShares < 0 && r.sellers.length > 0 && !r.likelyDelisted)
+    .sort((a, b) => a.netShares - b.netShares)
+    .slice(0, TOP_FLOW);
+
+  const delisted = rows
+    .filter((r) => r.likelyDelisted)
+    .sort((a, b) => a.netShares - b.netShares)
+    .slice(0, TOP_FLOW);
+
+  return { bought, sold, period, comparable, skippedStale, corporateActions, delisted };
 }

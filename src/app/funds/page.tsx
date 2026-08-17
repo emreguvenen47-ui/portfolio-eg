@@ -15,6 +15,8 @@ export const metadata = { title: "Fund Positioning" };
  */
 export default async function FundsPage() {
   const { funds, newestPeriod, trackedCount } = await fundPositioning();
+  const managers = funds.filter((f) => f.kind === "manager");
+  const corporates = funds.filter((f) => f.kind === "corporate");
 
   return (
     <div className="flex flex-col gap-3">
@@ -44,7 +46,39 @@ export default async function FundsPage() {
           </p>
         </section>
       ) : (
-        funds.map((f) => <FundAllocation key={f.cik} fund={f} />)
+        <>
+          {corporates.length > 0 && (
+            <>
+              <div className="flex flex-wrap items-baseline gap-2 pt-1">
+                <h2 className="text-[12px] font-semibold uppercase tracking-wide">
+                  Corporate strategic stakes
+                </h2>
+                <span className="text-[10px] text-[var(--ink-3)]">
+                  operating companies, not funds
+                </span>
+              </div>
+              <p className="text-[9.5px] leading-snug text-[var(--ink-3)]">
+                A corporation holding more than $100M in reportable securities files the same form
+                a fund does, which is where its strategic equity stakes become public. Read these
+                as a handful of deliberate positions rather than as a portfolio: Alphabet&apos;s is{" "}
+                {corporates.find((c) => c.manager === "Alphabet")?.topWeight.toFixed(0) ?? "95"}%
+                one holding. Private companies appear here when their shares carry a registered
+                class — which is why SpaceX is in this table and most private holdings are not.
+              </p>
+              {corporates.map((f) => (
+                <FundAllocation key={f.cik} fund={f} />
+              ))}
+            </>
+          )}
+
+          <div className="flex flex-wrap items-baseline gap-2 pt-2">
+            <h2 className="text-[12px] font-semibold uppercase tracking-wide">Money managers</h2>
+            <span className="text-[10px] text-[var(--ink-3)]">largest reported book first</span>
+          </div>
+          {managers.map((f) => (
+            <FundAllocation key={f.cik} fund={f} />
+          ))}
+        </>
       )}
 
       <p className="text-[9px] leading-snug text-[var(--ink-3)]">

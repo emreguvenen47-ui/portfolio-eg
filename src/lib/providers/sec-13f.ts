@@ -39,22 +39,44 @@ const cache: Map<string, { at: number; value: ManagerFiling[] }> = ((
 )[CACHE_KEY] ??= new Map());
 
 /** Managers whose filings are ingested. Large, long-lived, widely followed. */
-export const TRACKED_MANAGERS: { cik: string; name: string }[] = [
-  { cik: "0001067983", name: "Berkshire Hathaway" },
+/**
+ * `manager` runs money for clients; `corporate` is an operating company whose
+ * strategic stakes happen to cross the reporting threshold.
+ *
+ * They are kept apart because the same table means different things. A fund's
+ * 13F is its portfolio. A corporation's is a handful of deliberate positions —
+ * Alphabet's is 95% one holding — and reading it as a portfolio, or ranking it
+ * beside Vanguard's, would be reading it wrong.
+ */
+export type FilerKind = "manager" | "corporate";
+
+export const TRACKED_MANAGERS: { cik: string; name: string; kind: FilerKind }[] = [
+  { cik: "0001067983", name: "Berkshire Hathaway", kind: "manager" },
   // BlackRock files under a new entity from late 2024; the old CIK
   // (0001364742, "BlackRock Finance") stopped at 2024-06-30 and was quietly
   // serving two-year-old holdings next to current ones.
-  { cik: "0002012383", name: "BlackRock" },
-  { cik: "0000102909", name: "Vanguard Group" },
-  { cik: "0000093751", name: "State Street" },
-  { cik: "0001350694", name: "Bridgewater Associates" },
-  { cik: "0001037389", name: "Renaissance Technologies" },
-  { cik: "0001423053", name: "Citadel Advisors" },
-  { cik: "0001056188", name: "Two Sigma Investments" },
-  { cik: "0001167483", name: "Tiger Global Management" },
-  { cik: "0001061768", name: "Baupost Group" },
-  { cik: "0001336528", name: "Lone Pine Capital" },
-  { cik: "0001418814", name: "Coatue Management" },
+  { cik: "0002012383", name: "BlackRock", kind: "manager" },
+  { cik: "0000102909", name: "Vanguard Group", kind: "manager" },
+  { cik: "0000093751", name: "State Street", kind: "manager" },
+  { cik: "0001350694", name: "Bridgewater Associates", kind: "manager" },
+  { cik: "0001037389", name: "Renaissance Technologies", kind: "manager" },
+  { cik: "0001423053", name: "Citadel Advisors", kind: "manager" },
+  { cik: "0001056188", name: "Two Sigma Investments", kind: "manager" },
+  { cik: "0001167483", name: "Tiger Global Management", kind: "manager" },
+  { cik: "0001061768", name: "Baupost Group", kind: "manager" },
+  { cik: "0001336528", name: "Lone Pine Capital", kind: "manager" },
+  { cik: "0001418814", name: "Coatue Management", kind: "manager" },
+
+  /**
+   * Operating companies. A corporation holding more than $100M in 13(f)
+   * securities files the same form, which is where its strategic equity
+   * stakes become public — including private-company shares that carry a
+   * registered class, such as SpaceX.
+   */
+  { cik: "0001652044", name: "Alphabet", kind: "corporate" },
+  { cik: "0001045810", name: "NVIDIA", kind: "corporate" },
+  { cik: "0001018724", name: "Amazon", kind: "corporate" },
+  { cik: "0000050863", name: "Intel", kind: "corporate" },
 ];
 
 export interface Holding {
@@ -82,6 +104,8 @@ export function quartersBehind(period: string, newest: string): number {
 export interface ManagerFiling {
   cik: string;
   manager: string;
+  /** Money manager, or an operating company reporting strategic stakes. */
+  kind: FilerKind;
   accession: string;
   reportPeriod: string;
   filedAt: string;
@@ -135,7 +159,7 @@ function parseInfoTable(xml: string): Holding[] {
 }
 
 /** The two most recent 13F-HR filings for one manager, oldest last. */
-async function fetchManager(cik: string, name: string): Promise<ManagerFiling[]> {
+async function fetchManager(cik: string, name: string, kind: FilerKind): Promise<ManagerFiling[]> {
   const key = cik;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
@@ -189,6 +213,7 @@ async function fetchManager(cik: string, name: string): Promise<ManagerFiling[]>
     out.push({
       cik,
       manager: name,
+      kind,
       accession,
       reportPeriod: recent.reportDate?.[i] ?? "",
       filedAt: recent.filingDate?.[i] ?? "",
@@ -280,7 +305,7 @@ export async function loadTrackedFilings(): Promise<ManagerFiling[]> {
   await buildResolver();
   const out: ManagerFiling[] = [];
   for (const m of TRACKED_MANAGERS) {
-    const filings = await fetchManager(m.cik, m.name).catch(() => []);
+    const filings = await fetchManager(m.cik, m.name, m.kind).catch(() => []);
     out.push(...filings);
   }
   return out;

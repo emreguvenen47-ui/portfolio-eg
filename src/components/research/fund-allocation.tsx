@@ -27,6 +27,8 @@ interface Position {
 export interface Fund {
   cik: string;
   manager: string;
+  kind: "manager" | "corporate";
+  topWeight: number;
   period: string;
   filedAt: string;
   staleQuarters: number;
@@ -114,6 +116,19 @@ export function FundAllocation({ fund }: { fund: Fund }) {
     <section className="panel">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-[var(--line)] px-3 py-2">
         <span className="text-[12px] font-semibold">{fund.manager}</span>
+        {fund.kind === "corporate" && (
+          <span className="rounded-sm border border-[var(--line)] px-1.5 py-0.5 text-[8.5px] uppercase tracking-wide text-[var(--ink-3)]">
+            strategic stakes
+          </span>
+        )}
+        {fund.topWeight >= 50 && (
+          <span
+            className="text-[9.5px] text-[var(--amber)]"
+            title="One holding dominates the reported table. This is a concentrated stake, not a diversified book."
+          >
+            {fund.topWeight.toFixed(0)}% in one name
+          </span>
+        )}
         <span className="text-[10px] text-[var(--ink-3)]">
           {money(fund.reportedValue)} reported · {fund.positions.toLocaleString()} positions
         </span>

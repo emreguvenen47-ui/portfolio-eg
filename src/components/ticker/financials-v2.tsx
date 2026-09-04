@@ -40,6 +40,15 @@ function Sparkline({ values }: { values: Array<number | null> }) {
   );
 }
 
+const barLabel = (v: number, unit: "USD" | "PCT"): string => {
+  if (unit === "PCT") return `${(v * 100).toFixed(1)}%`;
+  const a = Math.abs(v);
+  if (a >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
+  if (a >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(0)}M`;
+  return v.toFixed(0);
+};
+
 function TrendChart({ series }: { series: ChartSeries[] }) {
   const [metric, setMetric] = useState(series[0]?.key ?? "revenue");
   const [mode, setMode] = useState<"quarterly" | "annual">("quarterly");
@@ -52,7 +61,8 @@ function TrendChart({ series }: { series: ChartSeries[] }) {
   const max = Math.max(...vals);
   const span = max - min || 1;
   const W = 560;
-  const H = 140;
+  const H = 150;
+  const TOP = 14; // headroom for the value label above each bar
   const bw = W / data.length;
   return (
     <div className="p-3">
@@ -77,21 +87,40 @@ function TrendChart({ series }: { series: ChartSeries[] }) {
           </button>
         ))}
       </div>
-      <svg viewBox={`0 0 ${W} ${H + 18}`} className="mt-2 w-full">
+      <svg viewBox={`0 0 ${W} ${H + TOP + 18}`} className="mt-2 w-full">
         {data.map((p, i) => {
-          const zero = H - ((0 - min) / span) * H;
-          const y = H - ((p.value - min) / span) * H;
+          const zero = TOP + H - ((0 - min) / span) * H;
+          const y = TOP + H - ((p.value - min) / span) * H;
           const up = p.value >= 0;
+          const yoy =
+            mode === "quarterly" && i >= 4 && data[i - 4]!.value !== 0
+              ? ((p.value - data[i - 4]!.value) / Math.abs(data[i - 4]!.value)) * 100
+              : mode === "annual" && i >= 1 && data[i - 1]!.value !== 0
+                ? ((p.value - data[i - 1]!.value) / Math.abs(data[i - 1]!.value)) * 100
+                : null;
           return (
             <g key={p.date}>
+              <title>
+                {p.date} · {active.label}: {active.unit === "PCT" ? `${(p.value * 100).toFixed(2)}%` : money(p.value)}
+                {yoy !== null ? ` · YoY ${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%` : ""}
+              </title>
               <rect
                 x={i * bw + 3}
                 y={Math.min(y, zero)}
                 width={bw - 6}
                 height={Math.max(2, Math.abs(zero - y))}
-                className={up ? "fill-emerald-500/60" : "fill-red-500/60"}
+                className={up ? "fill-emerald-500/60 hover:fill-emerald-400/80" : "fill-red-500/60 hover:fill-red-400/80"}
               />
-              <text x={i * bw + bw / 2} y={H + 12} textAnchor="middle" className="fill-current text-[8px] text-muted-foreground">
+              {/* the number ON the bar — every bar states its value */}
+              <text
+                x={i * bw + bw / 2}
+                y={Math.min(y, zero) - 3}
+                textAnchor="middle"
+                className="fill-current text-[8.5px] font-medium tabular-nums"
+              >
+                {barLabel(p.value, active.unit)}
+              </text>
+              <text x={i * bw + bw / 2} y={TOP + H + 12} textAnchor="middle" className="fill-current text-[8px] text-muted-foreground">
                 {mode === "quarterly" ? p.date.slice(2, 7) : p.date.slice(0, 4)}
               </text>
             </g>

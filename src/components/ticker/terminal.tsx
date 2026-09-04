@@ -201,6 +201,69 @@ export function QuickThesisPanel({ eg }: { eg: EgBundle }) {
   );
 }
 
+/** COMPANY PLAN — what the company is doing, every line cited or filed. */
+export function CompanyPlanPanel({ eg }: { eg: EgBundle }) {
+  const p = eg.plan;
+  const has = p.growthOutlook.length || p.initiatives.length || p.capitalAllocation.length || p.watchouts.length;
+  if (!has) return null;
+  const Item = ({ text, source }: { text: string; source: { title: string; date: string; url: string } | null }) => (
+    <li className="leading-snug">
+      {source ? (
+        <a href={source.url} target="_blank" rel="noreferrer" className="hover:text-[var(--amber)] hover:underline">
+          {text}
+        </a>
+      ) : (
+        text
+      )}
+      {source ? <span className="ml-1 text-[9px] text-[var(--ink-3)]">({source.date})</span> : null}
+    </li>
+  );
+  return (
+    <div className="rounded border border-[var(--line)]">
+      <div className="flex items-baseline gap-2 border-b border-[var(--line)] px-3 py-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--amber)]">Company Plan</span>
+        <span className="text-[9.5px] to-[var(--ink-3)] text-[var(--ink-3)]">
+          what the company is doing — every line cites a headline or a filing, nothing invented
+        </span>
+      </div>
+      <div className="grid grid-cols-1 divide-y divide-[var(--line)] text-[11px] sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-4">
+        <div className="p-3">
+          <div className="text-[9px] uppercase tracking-wider text-emerald-400">Growth outlook</div>
+          {p.growthOutlook.length ? (
+            <ul className="mt-1 list-disc space-y-1 pl-4">{p.growthOutlook.map((g) => <li key={g} className="leading-snug">{g}</li>)}</ul>
+          ) : (
+            <div className="mt-1 text-[var(--ink-3)]">No street path published.</div>
+          )}
+        </div>
+        <div className="p-3">
+          <div className="text-[9px] uppercase tracking-wider text-cyan-300">Initiatives (news-cited)</div>
+          {p.initiatives.length ? (
+            <ul className="mt-1 list-disc space-y-1 pl-4">{p.initiatives.map((i) => <Item key={i.text} {...i} />)}</ul>
+          ) : (
+            <div className="mt-1 text-[var(--ink-3)]">No initiative headlines in the recent window — honest empty.</div>
+          )}
+        </div>
+        <div className="p-3">
+          <div className="text-[9px] uppercase tracking-wider text-[var(--amber)]">Capital allocation (filed)</div>
+          {p.capitalAllocation.length ? (
+            <ul className="mt-1 list-disc space-y-1 pl-4">{p.capitalAllocation.map((c) => <li key={c} className="leading-snug">{c}</li>)}</ul>
+          ) : (
+            <div className="mt-1 text-[var(--ink-3)]">Cash-flow detail unavailable.</div>
+          )}
+        </div>
+        <div className="p-3">
+          <div className="text-[9px] uppercase tracking-wider text-rose-400">Watchouts (news-cited)</div>
+          {p.watchouts.length ? (
+            <ul className="mt-1 list-disc space-y-1 pl-4">{p.watchouts.map((w) => <Item key={w.text} {...w} />)}</ul>
+          ) : (
+            <div className="mt-1 text-[var(--ink-3)]">No regulatory/legal/supply headlines recently.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Per-tab accent so each product area has its own character. */
 export const TAB_ACCENT: Record<TickerTab, string> = {
   OVERVIEW: "var(--amber)",

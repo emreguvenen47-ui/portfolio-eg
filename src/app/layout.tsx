@@ -6,6 +6,7 @@ import { MobileNav, SideNav } from "@/components/shell/nav";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { HeaderStatus } from "@/components/shell/header-status";
+import { TickerTape } from "@/components/shell/ticker-tape";
 import { TickerSearch } from "@/components/shell/ticker-search";
 import { SessionBadge } from "@/components/auth/session-badge";
 
@@ -48,6 +49,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <SessionBadge />
               </div>
             </header>
+
+            {/* Macro tape: S&P · gold · silver · Brent · BTC · ETH · copper · natgas */}
+            <TickerTape />
 
             <MobileNav />
 

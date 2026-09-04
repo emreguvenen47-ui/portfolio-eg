@@ -9,6 +9,7 @@ import { buildTechnicalDecision, type TechnicalDecision } from "@/lib/engines/te
 import { buildFinancialsView, type FinancialsView } from "@/lib/engines/financials-view";
 import { computeValuation, type ValuationResult } from "@/lib/engines/valuation";
 import { buildThesis, type QuickThesis } from "@/lib/engines/thesis";
+import { buildCompanyPlan, type CompanyPlan } from "@/lib/engines/company-plan";
 import type { ClassifiedNews } from "@/lib/engines/news-classify";
 import type { CompanySnapshot } from "@/lib/data/normalize/company";
 import type { Candle } from "@/lib/types";
@@ -28,6 +29,7 @@ export interface EgBundle {
   story: FinancialStory;
   financialsView: FinancialsView;
   thesis: QuickThesis;
+  plan: CompanyPlan;
   news: ClassifiedNews[];
 }
 
@@ -55,6 +57,7 @@ export async function buildEgBundle(
   const financialsView = buildFinancialsView(snapshot);
   const news = await getClassifiedNews(symbol, 25, snapshot.identity.name).catch(() => []);
   const thesis = buildThesis({ snapshot, decision, valuation, expectations, story, technicalDecision, news });
+  const plan = buildCompanyPlan(snapshot, news, story);
 
   // Time-machine memory: what EG believed today (once per day, never rewritten).
   recordSnapshot(symbol, {
@@ -82,6 +85,7 @@ export async function buildEgBundle(
     story,
     financialsView,
     thesis,
+    plan,
     news,
   };
 }

@@ -40,7 +40,7 @@ export interface ValuationResult {
  * forward view. Historical per-company medians can replace these once the
  * snapshot store has enough depth.
  */
-const SECTOR_PE: Record<CompanySnapshot["identity"]["companyType"], number> = {
+export const SECTOR_PE: Record<CompanySnapshot["identity"]["companyType"], number> = {
   BANK: 12,
   INSURANCE: 12,
   REIT: 16,

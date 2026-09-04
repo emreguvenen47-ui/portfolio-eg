@@ -2,6 +2,11 @@ import "server-only";
 import type { FxRate, HistorySeries, MarketDataProvider, Quote } from "@/lib/types";
 import { isSymbolMarketOpen } from "./market-hours";
 import { isBistSymbol } from "./bist";
+import { MACRO_TICKERS } from "@/lib/data/macro-tickers";
+
+const MACRO_ALIAS: Record<string, string> = Object.fromEntries(
+  MACRO_TICKERS.map((t) => [t.alias, t.code]),
+);
 
 /**
  * EODHD — the primary market-data provider.
@@ -59,9 +64,14 @@ function currencyFor(eodhdCode: string): string {
 export function toEodhdCode(symbol: string): string | null {
   const s = symbol.trim().toUpperCase();
   if (!s) return null;
+  // Friendly macro aliases (GOLD, BTC, BRENT…) → real EODHD instruments.
+  const macro = MACRO_ALIAS[s];
+  if (macro) return macro;
   if (isBistSymbol(s)) return null; // verified: no Borsa İstanbul on EODHD
   if (s.includes("/")) return null; // FX pairs are handled by getFxRate
   if (s.startsWith("^")) return INDEX_MAP[s] ?? null;
+  // Already-qualified EODHD codes pass through (XAUUSD.FOREX, BTC-USD.CC…).
+  if (/\.(FOREX|CC|INDX|COMM|US)$/.test(s)) return s;
   // Plain US listings, including class shares like BRK.B → BRK-B.US
   if (/^[A-Z][A-Z0-9.-]{0,9}$/.test(s)) return `${s.replace(/\./g, "-")}.US`;
   return null;

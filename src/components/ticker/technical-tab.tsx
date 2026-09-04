@@ -162,6 +162,88 @@ export function TechnicalTab({ decision: t, candles }: { decision: TechnicalDeci
         </div>
       </Panel>
 
+      {/* ---------------- ACTION LADDER: every level, sorted, with the action */}
+      <Panel
+        title="Action Ladder"
+        subtitle="every structural level in price order — distance from here and what to do at each"
+        bodyClassName="p-0"
+      >
+        {(() => {
+          const px = t.price;
+          const year = candles.slice(-253);
+          const hi52 = year.length ? Math.max(...year.map((c) => c.high || c.close)) : null;
+          const lo52 = year.length ? Math.min(...year.map((c) => c.low || c.close)) : null;
+          type Row = { price: number; label: string; action: string; kind: "target" | "resistance" | "entry" | "price" | "support" | "stop" };
+          const rows: Row[] = [];
+          const add = (price: number | null, label: string, action: string, kind: Row["kind"]) => {
+            if (price !== null && Number.isFinite(price)) rows.push({ price, label, action, kind });
+          };
+          add(t.runnerTarget, "Runner target", "Final scale-out — measured-move objective; trail the rest.", "target");
+          add(t.target2, "T2 (major resistance)", "Second profit-take; expect supply here.", "target");
+          add(t.target1, "T1 (primary objective)", "First profit-take — take partials, move stop to entry.", "target");
+          add(hi52, "52-week high", "Momentum trigger: closes above put the stock in open air.", "resistance");
+          add(t.daily.secondaryResistance, "Resistance 2", "Next supply zone above the breakout level.", "resistance");
+          add(t.daily.primaryResistance, "Primary resistance / breakout", "BUY trigger on a daily close above with ≥1.3× average volume; expect rejection attempts.", "resistance");
+          add(t.daily.nearestGap ? (t.daily.nearestGap.from + t.daily.nearestGap.to) / 2 : null, `Open gap (${t.daily.nearestGap?.direction ?? ""})`, "Unfilled gaps attract price — a magnet level in both directions.", "resistance");
+          add(t.retestLevel, "Retest level", "Higher-quality BUY: wait for the broken level to hold as support.", "entry");
+          add(t.entry, "Entry zone", "Engine's preferred BUY area for the current setup.", "entry");
+          add(px, "► CURRENT PRICE", "", "price");
+          add(t.daily.anchoredVwap, "Anchored VWAP", "Average holder cost since the major low — dips to it often get bought.", "support");
+          add(t.daily.volumePoc, "Volume POC", "Heaviest traded price — strongest memory level on the tape.", "support");
+          add(t.daily.primarySupport, "Primary support", "ADD/BUY zone with a tight invalidation just below.", "support");
+          add(t.daily.secondarySupport, "Support 2", "Second demand zone; losing it degrades the structure.", "support");
+          for (const st of stops) add(st.price, `Stop ${st.kind}`, `${st.reason} (risk ${st.riskPct}%, ${st.atrDistance} ATR).`, "stop");
+          add(t.daily.majorSupport, "Major support", "Last structural defense — a close below changes the whole thesis.", "support");
+          add(t.daily.invalidation, "Invalidation", "SETUP VOID below here — no averaging down, exit the idea.", "stop");
+          add(lo52, "52-week low", "Full breakdown territory; do not anticipate a bottom without structure.", "support");
+          const seen = new Set<string>();
+          const uniq = rows
+            .filter((r) => {
+              const k = `${r.price.toFixed(2)}|${r.label}`;
+              if (seen.has(k)) return false;
+              seen.add(k);
+              return true;
+            })
+            .sort((a, b) => b.price - a.price);
+          const tone: Record<Row["kind"], string> = {
+            target: "text-emerald-400",
+            resistance: "text-rose-300",
+            entry: "text-cyan-300",
+            price: "text-white",
+            support: "text-emerald-300",
+            stop: "text-amber-400",
+          };
+          return (
+            <table className="grid-table">
+              <thead>
+                <tr>
+                  <th className="tl">Level</th>
+                  <th>Price</th>
+                  <th>From here</th>
+                  <th className="tl">What to do there</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uniq.map((r) => {
+                  const dist = px > 0 ? ((r.price / px - 1) * 100) : 0;
+                  const isPx = r.kind === "price";
+                  return (
+                    <tr key={`${r.label}-${r.price}`} className={isPx ? "bg-white/5" : ""}>
+                      <td className={`tl font-medium ${tone[r.kind]}`}>{r.label}</td>
+                      <td className="tabular-nums font-semibold">{money(r.price)}</td>
+                      <td className={`tabular-nums ${isPx ? "" : dist >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {isPx ? "—" : `${dist >= 0 ? "+" : ""}${dist.toFixed(1)}%`}
+                      </td>
+                      <td className="tl max-w-[420px] text-[10px] leading-snug text-[var(--ink-3)]">{r.action}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })()}
+      </Panel>
+
       {/* Risk plan + targets */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title="Risk Plan" subtitle="structural stops — placed under structure, not percentages" bodyClassName="p-0">

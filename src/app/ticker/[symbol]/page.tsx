@@ -86,6 +86,7 @@ import {
   toRecommendations,
 } from "@/lib/data/eodhd/legacy-adapter";
 import {
+  CompanyPlanPanel,
   DecisionBar,
   QuickThesisPanel,
   TabNav,
@@ -393,6 +394,7 @@ export default async function TickerPage(props: {
       {tab === "OVERVIEW" && (
         <>
           {eg && <QuickThesisPanel eg={eg} />}
+          {eg && <CompanyPlanPanel eg={eg} />}
 
           <Panel bodyClassName="p-0">
             <div className="grid grid-cols-2 divide-x divide-y divide-[var(--line)] sm:grid-cols-4 lg:grid-cols-6">

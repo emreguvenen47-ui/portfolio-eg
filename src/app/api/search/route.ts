@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { finnhubKey } from "@/lib/providers/finnhub";
 import { searchBist, bistListing, registerBistTickers } from "@/lib/providers/bist";
 import { loadBistUniverse, searchUniverse } from "@/lib/providers/bist-universe";
+import { MACRO_TICKERS } from "@/lib/data/macro-tickers";
+import { MAJOR_ETFS } from "@/lib/data/etf-list";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +31,43 @@ export interface SearchResult {
   description: string;
   type: string;
   /** Coarse instrument class, so the picker can label each row. */
-  kind: "US STOCK" | "BIST" | "ETF" | "INDEX";
+  kind: "US STOCK" | "BIST" | "ETF" | "INDEX" | "COMMODITY" | "CRYPTO";
+}
+
+/** Macro aliases + the ETF desk match locally, ahead of the remote search —
+ * a user typing "gold" or "altın" must find GOLD without a provider trip. */
+const MACRO_WORDS: Array<{ words: string[]; alias: string }> = [
+  { words: ["gold", "altin", "altın", "xau"], alias: "GOLD" },
+  { words: ["silver", "gumus", "gümüş", "xag"], alias: "SILVER" },
+  { words: ["brent", "oil", "petrol"], alias: "BRENT" },
+  { words: ["btc", "bitcoin"], alias: "BTC" },
+  { words: ["eth", "ethereum"], alias: "ETH" },
+  { words: ["copper", "bakir", "bakır"], alias: "COPPER" },
+  { words: ["natgas", "gas", "dogalgaz", "doğalgaz"], alias: "NATGAS" },
+  { words: ["spx", "s&p", "sp500"], alias: "SPX" },
+];
+
+function localMatches(q: string): SearchResult[] {
+  const t = q.toLowerCase();
+  const out: SearchResult[] = [];
+  for (const m of MACRO_TICKERS) {
+    const words = MACRO_WORDS.find((w) => w.alias === m.alias)?.words ?? [];
+    if (m.alias.toLowerCase().startsWith(t) || words.some((w) => w.startsWith(t))) {
+      out.push({
+        symbol: m.alias,
+        description: `${m.label} · ${m.code}`,
+        type: m.kind,
+        kind: m.kind === "CRYPTO" ? "CRYPTO" : m.kind === "INDEX" ? "INDEX" : "COMMODITY",
+      });
+    }
+  }
+  for (const e of MAJOR_ETFS) {
+    if (e.symbol.toLowerCase().startsWith(t) || e.name.toLowerCase().includes(t)) {
+      out.push({ symbol: e.symbol, description: e.name, type: "ETF", kind: "ETF" });
+      if (out.length > 10) break;
+    }
+  }
+  return out.slice(0, 6);
 }
 
 export async function GET(req: Request) {
@@ -63,13 +101,15 @@ export async function GET(req: Request) {
       kind: "BIST" as const,
     }));
   const bist: SearchResult[] = [...curated, ...discovered].slice(0, 10);
+  const local = localMatches(q); // GOLD/BTC/major ETFs resolve before any provider
 
   const token = finnhubKey();
   if (!token) {
     // BIST search is local, so it still works with no Finnhub key at all.
+    const offline = [...local, ...bist];
     return NextResponse.json(
-      bist.length
-        ? { results: bist }
+      offline.length
+        ? { results: offline }
         : { results: [], error: "Symbol search needs FINNHUB_API_KEY" },
       { status: 200 },
     );
@@ -108,12 +148,13 @@ export async function GET(req: Request) {
         };
       });
 
-    const merged = [...bist, ...results].slice(0, 14);
+    const localSyms = new Set(local.map((l) => l.symbol));
+    const merged = [...local, ...bist, ...results.filter((r) => !localSyms.has(r.symbol))].slice(0, 14);
     cache.set(key, { at: Date.now(), results: merged });
     return NextResponse.json({ results: merged });
   } catch (e) {
     // A Finnhub outage must not take BIST search down with it.
-    if (bist.length) return NextResponse.json({ results: bist });
+    if (local.length || bist.length) return NextResponse.json({ results: [...local, ...bist] });
     return NextResponse.json(
       { results: [], error: e instanceof Error ? e.message : "Search failed" },
       { status: 200 },

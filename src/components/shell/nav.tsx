@@ -49,6 +49,7 @@ const NAV = [
   { href: "/markets", label: "Markets", icon: Activity },
   { href: "/opportunities", label: "Opportunities", icon: Radar },
   { href: "/screener", label: "Custom Screener", icon: Filter },
+  { href: "/etfs", label: "ETFs", icon: PieChart },
   { href: "/rotation", label: "Sector Flows", icon: Shuffle },
   { href: "/funds", label: "Fund 13F", icon: PieChart },
   { href: "/flows", label: "Company Flow", icon: ArrowLeftRight },

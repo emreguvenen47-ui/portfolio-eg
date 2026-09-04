@@ -1,3 +1,4 @@
+import { eodhdEtfSource } from "@/lib/data/eodhd/etf";
 import "server-only";
 import { registerHoldingsSource } from "./etf-holdings";
 import { registerReleaseSource } from "@/lib/events/analogues";
@@ -58,3 +59,7 @@ if (!g[DONE]) {
 export function registerProviders(): void {
   // Kept for callers that import it explicitly; the work happens above.
 }
+
+// EODHD carries top holdings + sector weights for US-listed funds; registering
+// the source lights up every ETF surface (holdings, overlap, reverse lookup).
+if (process.env.EODHD_API_KEY) registerHoldingsSource(eodhdEtfSource);

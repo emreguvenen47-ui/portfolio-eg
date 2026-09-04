@@ -28,6 +28,7 @@ import { DailyBrief } from "@/components/dashboard/daily-brief";
 import { PortfolioCommentary } from "@/components/dashboard/commentary";
 import { NewsHeadlines } from "@/components/news/news-feed";
 import { CommandCenter } from "@/components/dashboard/command-center";
+import { SectorHeatmap } from "@/components/dashboard/sector-heatmap";
 
 const HEALTH_TONE: Record<SignalState, "pos" | "neutral" | "warn" | "neg"> = {
   GOOD: "pos",
@@ -102,6 +103,7 @@ export default async function OverviewPage() {
   return (
     <div className="flex flex-col gap-3">
       <CommandCenter />
+      <SectorHeatmap />
       <SampleBanner portfolio={ctx.portfolio} />
       {bundle.status === "UNAVAILABLE" && (
         <Note tone="warn">

@@ -79,6 +79,12 @@ import {
 import { buildEgBundle } from "@/lib/engines/eg-bundle";
 import { buildTechnicalDecision } from "@/lib/engines/technical-v3";
 import { getClassifiedNews } from "@/lib/data/eodhd/news";
+import { macroByAlias } from "@/lib/data/macro-tickers";
+import { isMajorEtf } from "@/lib/data/etf-list";
+import { getEtfView } from "@/lib/data/eodhd/etf";
+import { EtfPage, MacroPage } from "@/components/ticker/instrument-pages";
+import { buildStreetView } from "@/lib/engines/street-view";
+import { getSnapshotHistory } from "@/lib/data/snapshots";
 import {
   toEarningsPoints,
   toFinancialPeriods,
@@ -157,6 +163,29 @@ export default async function TickerPage(props: {
   const bist = isBistSymbol(symbol);
   const history = await getHistoricalPrices(symbol, 1300);
   const candles = history.candles;
+
+  // ---------------- instrument-aware branches (a commodity is not a company)
+  const macro = macroByAlias(symbol);
+  const rawTab = typeof sp.tab === "string" ? sp.tab.toLowerCase() : "overview";
+  if (macro) {
+    const q = await within(CORE_MS, getQuotes([symbol]), {} as Awaited<ReturnType<typeof getQuotes>>);
+    const lastPx = candles.at(-1)?.close ?? q[symbol]?.price ?? null;
+    const d = candles.length >= 60 ? buildTechnicalDecision(symbol, candles) : null;
+    return <MacroPage macro={macro} candles={candles} quote={q[symbol] ?? null} last={lastPx} decision={d} tab={rawTab} />;
+  }
+  if (!bist && isMajorEtf(symbol)) {
+    const etfView = await within(CORE_MS, getEtfView(symbol), null);
+    if (etfView) {
+      const q = await within(CORE_MS, getQuotes([symbol]), {} as Awaited<ReturnType<typeof getQuotes>>);
+      const lastPx = candles.at(-1)?.close ?? q[symbol]?.price ?? null;
+      const d = candles.length >= 60 ? buildTechnicalDecision(symbol, candles) : null;
+      const etfNews = await within(PANEL_MS, getClassifiedNews(symbol, 25).catch(() => []), []);
+      return (
+        <EtfPage view={etfView} symbol={symbol} candles={candles} quote={q[symbol] ?? null} last={lastPx} decision={d} news={etfNews} tab={rawTab} />
+      );
+    }
+  }
+
   const eg = bist ? null : await within(CORE_MS, buildEgBundle(symbol, null, candles), null);
   const egSnapshot = eg?.snapshot ?? null;
   const useEodhd = egSnapshot !== null;
@@ -396,6 +425,51 @@ export default async function TickerPage(props: {
           {eg && <QuickThesisPanel eg={eg} />}
           {eg && <CompanyPlanPanel eg={eg} />}
 
+          {/* EG TIME MACHINE — what EG believed then vs now (daily snapshots, never rewritten) */}
+          {eg && (() => {
+            const hist = getSnapshotHistory(symbol);
+            if (hist.length < 2) return null;
+            const today = hist[hist.length - 1]!;
+            const pick = (daysBack: number) => {
+              const target = new Date(Date.now() - daysBack * 86_400_000).toISOString().slice(0, 10);
+              return [...hist].reverse().find((h) => h.date <= target) ?? hist[0]!;
+            };
+            const ago7 = pick(7);
+            const ago30 = pick(30);
+            const rows: Array<[string, (s: typeof today) => string]> = [
+              ["Price", (x) => (x.price !== null ? `$${x.price.toFixed(2)}` : "—")],
+              ["EG fair value", (x) => (x.fairValue !== null ? `$${x.fairValue.toFixed(2)}` : "—")],
+              ["Upside", (x) => (x.upsidePct !== null ? `${x.upsidePct > 0 ? "+" : ""}${x.upsidePct.toFixed(0)}%` : "—")],
+              ["Technical state", (x) => x.technicalState ?? "—"],
+              ["Support", (x) => (x.primarySupport !== null ? `$${x.primarySupport.toFixed(2)}` : "—")],
+              ["Revision score", (x) => (x.revisionScore !== null ? `${x.revisionScore}/100` : "—")],
+            ];
+            return (
+              <Panel title="EG Time Machine" subtitle="what this terminal believed on past days — daily snapshots, written once, never rewritten" bodyClassName="p-0">
+                <table className="grid-table">
+                  <thead>
+                    <tr>
+                      <th className="tl">Belief</th>
+                      <th>{ago30.date}</th>
+                      <th>{ago7.date}</th>
+                      <th>Today ({today.date})</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(([label, get]) => (
+                      <tr key={label}>
+                        <td className="tl text-[var(--ink-3)]">{label}</td>
+                        <td className="tabular-nums">{get(ago30)}</td>
+                        <td className="tabular-nums">{get(ago7)}</td>
+                        <td className="tabular-nums font-semibold">{get(today)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Panel>
+            );
+          })()}
+
           <Panel bodyClassName="p-0">
             <div className="grid grid-cols-2 divide-x divide-y divide-[var(--line)] sm:grid-cols-4 lg:grid-cols-6">
               <Kpi
@@ -443,17 +517,18 @@ export default async function TickerPage(props: {
             )}
           </Panel>
 
-          <Panel title="Price History" bodyClassName="p-0">
-            <TickerChart symbol={symbol} />
-          </Panel>
-
-          <Panel
-            title="Key Company Metrics"
-            subtitle="the ten-second read — arrows use metric-specific rules, not the sign of the number"
-            bodyClassName="p-0"
-          >
-            <KeyMetricsPanel items={keyMetrics} />
-          </Panel>
+          <div className="grid gap-3 xl:grid-cols-3">
+            <Panel title="Price History" bodyClassName="p-0" className="xl:col-span-2">
+              <TickerChart symbol={symbol} />
+            </Panel>
+            <Panel
+              title="Key Company Metrics"
+              subtitle="the ten-second read"
+              bodyClassName="p-0"
+            >
+              <KeyMetricsPanel items={keyMetrics} />
+            </Panel>
+          </div>
 
           <Section
             title="OPPORTUNITY / PEER POSITION"
@@ -483,10 +558,25 @@ export default async function TickerPage(props: {
             bodyClassName="p-0"
           >
             {catalysts.length === 0 ? (
-              <Empty>
-                No dated catalyst available for {symbol}. Dividends and investor days are N/A on
-                the configured data plan.
-              </Empty>
+              (() => {
+                const nextEst = eg?.snapshot.forwardEstimates.find((e) => e.periodEnd > new Date().toISOString().slice(0, 10));
+                return nextEst ? (
+                  <div className="px-3 py-2 text-[11px]">
+                    <Chip tone="amber">NEXT REPORT</Chip>
+                    <span className="ml-2">
+                      Results for the period ending <span className="font-semibold tabular-nums">{nextEst.periodEnd}</span>
+                      {nextEst.epsAvg !== null ? ` — street EPS $${nextEst.epsAvg.toFixed(2)}` : ""}
+                      {nextEst.analystCount ? ` (${nextEst.analystCount} analysts)` : ""}
+                    </span>
+                    <span className="ml-2 text-[9.5px] text-[var(--ink-3)]">derived from estimate periods; exact report date not yet published</span>
+                  </div>
+                ) : (
+                  <Empty>
+                    No dated catalyst available for {symbol}. Dividends and investor days are N/A on
+                    the configured data plan.
+                  </Empty>
+                );
+              })()
             ) : (
               <table className="grid-table">
                 <thead>
@@ -825,6 +915,50 @@ export default async function TickerPage(props: {
             <AnalystPanel report={analystReport} price={last} />
           </Section>
 
+          {eg && (() => {
+            const sv = buildStreetView(eg.snapshot, eg.news, eg.expectations, eg.price);
+            return (
+              <Panel title="Why the Street Is Positioned This Way" subtitle="consensus motive reconstructed from filings + the actual analyst headlines — every driver cites its number" bodyClassName="p-0">
+                <div className="border-b border-[var(--line)] px-3 py-2 text-[11.5px] leading-snug">{sv.stance}</div>
+                <div className="grid grid-cols-1 divide-y divide-[var(--line)] sm:grid-cols-2 sm:divide-y-0 sm:divide-x">
+                  <div className="p-3">
+                    <div className="text-[9px] uppercase tracking-wider text-emerald-400">What the Buys lean on</div>
+                    {sv.bullDrivers.length ? (
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] leading-snug">{sv.bullDrivers.map((b) => <li key={b}>{b}</li>)}</ul>
+                    ) : (
+                      <div className="mt-1 text-[10.5px] text-[var(--ink-3)]">No fundamental driver cleared the bar.</div>
+                    )}
+                  </div>
+                  <div className="p-3">
+                    <div className="text-[9px] uppercase tracking-wider text-rose-400">What the Holds/Sells point at</div>
+                    {sv.bearDrivers.length ? (
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] leading-snug">{sv.bearDrivers.map((b) => <li key={b}>{b}</li>)}</ul>
+                    ) : (
+                      <div className="mt-1 text-[10.5px] text-[var(--ink-3)]">No standing objection in the data.</div>
+                    )}
+                  </div>
+                </div>
+                {sv.targetMath && (
+                  <div className="border-t border-[var(--line)] px-3 py-1.5 text-[10.5px] text-[var(--ink-2)]">{sv.targetMath}</div>
+                )}
+                {sv.actions.length > 0 && (
+                  <div className="border-t border-[var(--line)] p-3">
+                    <div className="text-[9px] uppercase tracking-wider text-[var(--ink-3)]">Latest analyst actions (as reported)</div>
+                    <ul className="mt-1 space-y-1 text-[10.5px]">
+                      {sv.actions.map((a) => (
+                        <li key={a.url}>
+                          <span className={a.sentiment === "POSITIVE" ? "text-emerald-400" : a.sentiment === "NEGATIVE" ? "text-rose-400" : "text-[var(--ink-3)]"}>●</span>{" "}
+                          <a href={a.url} target="_blank" rel="noreferrer" className="hover:underline">{a.title}</a>
+                          <span className="ml-1 text-[9px] text-[var(--ink-3)]">({a.date})</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </Panel>
+            );
+          })()}
+
           {eg && (
             <Panel title="Street vs EG" subtitle="consensus target against the model fan" bodyClassName="p-0">
               <div className="grid grid-cols-2 divide-x divide-y divide-[var(--line)] sm:grid-cols-4">
@@ -849,13 +983,15 @@ export default async function TickerPage(props: {
             </Panel>
           )}
 
-          <Section
-            title="GUIDANCE"
-            subtitle="management's own forecasts"
-            badge={<Chip tone="neutral">{guidanceReport.trend}</Chip>}
-          >
-            <GuidancePanel report={guidanceReport} />
-          </Section>
+          {bist && (
+            <Section
+              title="GUIDANCE"
+              subtitle="management's own forecasts"
+              badge={<Chip tone="neutral">{guidanceReport.trend}</Chip>}
+            >
+              <GuidancePanel report={guidanceReport} />
+            </Section>
+          )}
         </>
       )}
 

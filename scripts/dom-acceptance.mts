@@ -65,7 +65,8 @@ await page.click('[data-testid="ticker-tabs"] a:has-text("TECHNICAL")');
 await page.waitForURL("**tab=technical**", { timeout: 60_000 });
 await page.waitForTimeout(2500);
 const canvasCount = await page.locator("canvas").count();
-log("AAPL: TECHNICAL tab click → chart canvas rendered", canvasCount > 0, `${canvasCount} canvases`);
+const tvEmbedded = page.frames().some((f) => f.url().includes("tradingview"));
+log("AAPL: TECHNICAL tab click → chart rendered", canvasCount > 0 || tvEmbedded, tvEmbedded ? "TradingView widget" : `${canvasCount} canvases`);
 const riskPlan = await page.locator("text=Risk Plan").count();
 const stopLadder = await page.locator("text=STANDARD").count();
 log("AAPL: TECHNICAL tab shows Risk Plan + stop ladder", riskPlan > 0 && stopLadder > 0);
@@ -75,9 +76,15 @@ log("AAPL: FULL SCREEN button visible", (await fsBtn.count()) > 0);
 // ------------------------------------------------- fullscreen workstation
 await fsBtn.click();
 await page.waitForURL("**/chart/AAPL", { timeout: 20_000 });
+await page.waitForTimeout(5000);
+// Default engine is the official TradingView widget; verify, then switch to
+// EG mode for the drawing/indicator/persistence steps.
+const tvLoaded = page.frames().some((f) => f.url().includes("tradingview"));
+log("Workstation: TradingView widget loads by default", tvLoaded);
+await page.click('button:has-text("EG CHART")');
 await page.waitForTimeout(3000);
 const wsCanvas = await page.locator("canvas").count();
-log("Workstation: /chart/AAPL opens with chart", wsCanvas > 0, `${wsCanvas} canvases`);
+log("Workstation: EG chart mode renders", wsCanvas > 0, `${wsCanvas} canvases`);
 
 // candlestick default + toggle line/area
 await page.click('button:has-text("line")');
@@ -176,7 +183,9 @@ log("Workstation: paper trade booked with snapshot", ptR.ok() && ptBooked > 0, `
 await page.goto(`${BASE}/ticker/MSFT`, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(800);
 await page.goto(`${BASE}/chart/AAPL`, { waitUntil: "domcontentloaded" });
-await page.waitForTimeout(3500);
+await page.waitForTimeout(3000);
+await page.click('button:has-text("EG CHART")').catch(() => null);
+await page.waitForTimeout(1500);
 const persisted = await page.evaluate(async () => {
   const r = await fetch("/api/chart/drawings?symbol=AAPL&tf=DAILY");
   return (await r.json()) as { drawings: Array<{ type: string }> };
@@ -193,8 +202,9 @@ for (const sym of ["NVDA", "MSFT", "JPM", "MU"]) {
   await page.goto(`${BASE}/ticker/${sym}?tab=technical`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
   const c = await page.locator("canvas").count();
+  const tv = page.frames().some((f) => f.url().includes("tradingview"));
   const nav = await tabHrefs(page);
-  log(`${sym}: technical tab + tabs smoke`, c > 0 && nav.includes("NEWS"), `canvases ${c}`);
+  log(`${sym}: technical tab + tabs smoke`, (c > 0 || tv) && nav.includes("NEWS"), tv ? "TV widget" : `canvases ${c}`);
 }
 
 // screener → company → same workstation

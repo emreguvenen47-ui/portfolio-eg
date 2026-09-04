@@ -37,6 +37,7 @@ import {
   atrSeries,
   vwapSeries,
 } from "@/lib/engines/indicators";
+import { TvChart } from "./tv-chart";
 import type { TechnicalReport, ReportLevel } from "@/lib/engines/technical-report";
 
 /**
@@ -118,6 +119,9 @@ export function Workstation({
   const priceLinesRef = useRef<Array<{ line: unknown; remove: () => void }>>([]);
 
   const [range, setRange] = useState<RangeKey>(compact ? "1Y" : "1Y");
+  // Chart engine mode: EG (lightweight-charts + our drawings/EG overlays) or
+  // the official TradingView widget (their full UI and drawing tools).
+  const [engine, setEngine] = useState<"EG" | "TV">("TV");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [chartType, setChartType] = useState<ChartType>("candles");
@@ -229,6 +233,7 @@ export function Workstation({
   const paneList = useMemo(() => ["volume", ...panes] as string[], [panes]);
 
   useEffect(() => {
+    if (engine !== "EG") return; // TV mode renders the official widget instead
     const el = containerRef.current;
     if (!el || candles.length === 0) return;
 
@@ -406,7 +411,7 @@ export function Workstation({
       mainSeriesRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, chartType, logScale, mas, showBB, showVwap, panes, rsiPeriod, tfKey]);
+  }, [engine, candles, chartType, logScale, mas, showBB, showVwap, panes, rsiPeriod, tfKey]);
 
   // ------------------------------------------------------------ EG overlays
   const rebuildEgLines = useCallback(() => {
@@ -738,23 +743,36 @@ export function Workstation({
           {ohlc ? `O ${ohlc.open.toFixed(2)} H ${ohlc.high.toFixed(2)} L ${ohlc.low.toFixed(2)} C ${ohlc.close.toFixed(2)}` : "…"}
         </span>
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {RANGES.map((r) => (
+        {(["TV", "EG"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setEngine(m)}
+            className={btn(engine === m)}
+            title={m === "TV" ? "TradingView chart (official widget — TradingView's own tools)" : "EG chart (our drawings, EG overlays, persistence)"}
+          >
+            {m === "TV" ? "TRADINGVIEW" : "EG CHART"}
+          </button>
+        ))}
+        <span className="mx-1 h-4 w-px bg-[var(--line)]" />
+        {engine === "EG" && RANGES.map((r) => (
           <button key={r} type="button" onClick={() => setRange(r)} className={btn(range === r)}>
             {r}
           </button>
         ))}
-        <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {(["candles", "line", "area"] as ChartType[]).map((t) => (
+        {engine === "EG" && <span className="mx-1 h-4 w-px bg-[var(--line)]" />}
+        {engine === "EG" && (["candles", "line", "area"] as ChartType[]).map((t) => (
           <button key={t} type="button" onClick={() => setChartType(t)} className={btn(chartType === t)}>
             {t}
           </button>
         ))}
-        <button type="button" onClick={() => setLogScale((v) => !v)} className={btn(logScale)}>
-          LOG
-        </button>
-        <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {/* indicator toggles */}
-        {[20, 50, 100, 200].map((p) => (
+        {engine === "EG" && (
+          <button type="button" onClick={() => setLogScale((v) => !v)} className={btn(logScale)}>
+            LOG
+          </button>
+        )}
+        {engine === "EG" && <span className="mx-1 h-4 w-px bg-[var(--line)]" />}
+        {engine === "EG" && [20, 50, 100, 200].map((p) => (
           <button
             key={p}
             type="button"
@@ -766,13 +784,17 @@ export function Workstation({
             MA{p}
           </button>
         ))}
-        <button type="button" onClick={() => setShowBB((v) => !v)} className={btn(showBB)}>
-          BB
-        </button>
-        <button type="button" onClick={() => setShowVwap((v) => !v)} className={btn(showVwap)}>
-          VWAP
-        </button>
-        {PANE_INDICATORS.map((pi) => (
+        {engine === "EG" && (
+          <button type="button" onClick={() => setShowBB((v) => !v)} className={btn(showBB)}>
+            BB
+          </button>
+        )}
+        {engine === "EG" && (
+          <button type="button" onClick={() => setShowVwap((v) => !v)} className={btn(showVwap)}>
+            VWAP
+          </button>
+        )}
+        {engine === "EG" && PANE_INDICATORS.map((pi) => (
           <button
             key={pi.id}
             type="button"
@@ -782,7 +804,7 @@ export function Workstation({
             {pi.label}
           </button>
         ))}
-        {panes.includes("rsi") && (
+        {engine === "EG" && panes.includes("rsi") && (
           <input
             type="number"
             value={rsiPeriod}
@@ -814,7 +836,7 @@ export function Workstation({
 
       <div className="flex min-h-0 flex-1 gap-1">
         {/* ---------------------------------------------------- left toolbar */}
-        {!compact && (
+        {!compact && engine === "EG" && (
           <div className="flex w-9 flex-col items-center gap-0.5 overflow-y-auto rounded border border-[var(--line)] py-1">
             {TOOL_LABELS.map((t) => (
               <button
@@ -855,6 +877,11 @@ export function Workstation({
         )}
 
         {/* --------------------------------------------------------- chart */}
+        {engine === "TV" ? (
+          <div className="relative min-w-0 flex-1 overflow-hidden rounded border border-[var(--line)] bg-black/20">
+            <TvChart symbol={symbol} height={compact ? 520 : 860} />
+          </div>
+        ) : (
         <div className="relative min-w-0 flex-1 overflow-hidden rounded border border-[var(--line)] bg-black/20">
           {loadErr ? (
             <div className="flex h-full items-center justify-center text-[var(--ink-3)]">{loadErr}</div>
@@ -881,6 +908,7 @@ export function Workstation({
             </>
           )}
         </div>
+        )}
 
         {/* ----------------------------------------------------- right panel */}
         {!compact && (

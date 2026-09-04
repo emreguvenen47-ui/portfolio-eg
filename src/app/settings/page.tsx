@@ -4,6 +4,7 @@ import { SettingsForm } from "@/components/settings/settings-form";
 import { ExcelImport } from "@/components/settings/excel-import";
 import { getProviderHealth, resolveProvider } from "@/lib/providers";
 import { budgetFor, remainingToday, spentToday } from "@/lib/providers/budget";
+import { isFmpConfigured } from "@/lib/providers/fmp";
 import { isSupabaseConfigured } from "@/lib/server/supabase";
 import { fmtPct, fmtTime } from "@/lib/format";
 
@@ -17,6 +18,10 @@ export default async function SettingsPage() {
   const tdBudget = budgetFor("twelvedata");
   const tdSpent = spentToday("twelvedata");
   const tdRemaining = remainingToday("twelvedata");
+  const fmpKeyPresent = isFmpConfigured();
+  const fmpBudget = budgetFor("fmp");
+  const fmpSpent = spentToday("fmp");
+  const fmpRemaining = remainingToday("fmp");
   const supabase = isSupabaseConfigured();
 
   return (
@@ -102,6 +107,28 @@ export default async function SettingsPage() {
                 </strong>{" "}
                 today ({tdRemaining} left). Raise with{" "}
                 <code className="text-[10px] text-[var(--amber)]">TWELVEDATA_DAILY_BUDGET</code>.
+              </td>
+            </tr>
+            <tr>
+              <td className="tl">Financial Modeling Prep (balance sheet)</td>
+              <td className="tl">
+                <Chip tone={fmpKeyPresent ? "pos" : "warn"}>
+                  {fmpKeyPresent ? "CONFIGURED" : "NOT CONFIGURED"}
+                </Chip>
+              </td>
+              <td className="tl">
+                <code className="text-[10px] text-[var(--amber)]">FMP_API_KEY</code>
+              </td>
+              <td className="tl text-[10.5px] text-[var(--ink-3)]">
+                Fills blank balance-sheet cells the SEC concept matching missed, and never
+                overwrites a filed figure. Two requests per symbol, capped at{" "}
+                <strong className="text-[var(--ink-2)]">
+                  {fmpSpent}/{fmpBudget} requests
+                </strong>{" "}
+                today ({fmpRemaining} left); raise with{" "}
+                <code className="text-[10px] text-[var(--amber)]">FMP_DAILY_BUDGET</code>. Entry
+                plans cover US symbols only — BIST and other non-US tickers are skipped and stay
+                on Yahoo.
               </td>
             </tr>
             <tr>

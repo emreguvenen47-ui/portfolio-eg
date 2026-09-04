@@ -96,18 +96,24 @@ async function hydrate<T>(kind: string, slot: Slot<T>): Promise<void> {
   if (slot.hydrating) return slot.hydrating;
 
   slot.hydrating = (async () => {
-    const cutoff = new Date(Date.now() - slot.maxAgeMs).toISOString();
     const sb = getSupabaseAdmin();
 
     if (sb) {
       try {
         const PAGE = 1_000;
         for (let from = 0; ; from += PAGE) {
+          // No age filter: everything of this kind is loaded regardless of how
+          // old it is. Age only ever decided whether a row belonged in the
+          // in-memory map at all — a row past `maxAgeMs` was invisible for the
+          // rest of the process's life even though it was sitting right there
+          // in Supabase, durable and correct. That produced exactly the "data
+          // disappeared while the app was running" symptom this cache exists
+          // to prevent. `isStale` (below) is where age now actually matters:
+          // it flags a row for a background refresh without hiding it.
           const { data, error } = await sb
             .from(TABLE)
             .select("symbol, payload, updated_at")
             .eq("kind", kind)
-            .gte("updated_at", cutoff)
             .range(from, from + PAGE - 1);
           if (error || !data?.length) break;
           for (const r of data) {
@@ -178,38 +184,52 @@ async function flush<T>(kind: string, slot: Slot<T>): Promise<void> {
 export interface SharedCache<T> {
   /** Must be awaited once before the synchronous reads mean anything. */
   ready(): Promise<void>;
+  /** Returns the value whether or not it is stale — see `isStale`. */
   get(symbol: string): T | undefined;
+  /** True if an entry exists at all, regardless of age. */
   has(symbol: string): boolean;
+  /** True only if an entry exists AND has crossed `maxAgeMs`. False for a missing entry — that is "absent", not "stale". */
+  isStale(symbol: string): boolean;
   set(symbol: string, value: T): void;
   size(): number;
   /** Write pending rows now rather than on the timer. */
   flushNow(): Promise<void>;
 }
 
+/**
+ * `maxAgeMs` governs staleness, not survival — see the note on `disk-cache.ts`
+ * for why an assembled record must never become unavailable just because it
+ * has aged. It is only used here to answer `isStale`, which callers use to
+ * decide what to hand the background warm queue; it never gates `get`/`has`.
+ */
 export function sharedCache<T>(kind: string, maxAgeMs: number): SharedCache<T> {
   const slot = slotFor<T>(kind, maxAgeMs);
-
-  const fresh = (e: Entry<T> | undefined): e is Entry<T> =>
-    e !== undefined && Date.now() - e.at < maxAgeMs;
 
   return {
     ready: () => hydrate(kind, slot),
     get(symbol) {
       const hit = slot.mem.get(symbol);
-      if (fresh(hit)) return hit.value;
+      if (hit) return hit.value;
       // Local disk still helps a machine running without Supabase.
-      // The disk layer keeps its own timestamps, so a hit there is already
-      // within the age limit.
       const onDisk = slot.disk.get(symbol);
       if (onDisk !== undefined) {
-        const e = { at: Date.now(), value: onDisk };
-        slot.mem.set(symbol, e);
+        // Carry over whether disk considers this stale, rather than stamping
+        // "now" unconditionally — that would make a genuinely stale record
+        // look freshly written the moment it is read into memory, hiding it
+        // from isStale for another maxAgeMs.
+        const at = slot.disk.isStale(symbol) ? Date.now() - maxAgeMs - 1 : Date.now();
+        slot.mem.set(symbol, { at, value: onDisk });
         return onDisk;
       }
       return undefined;
     },
     has(symbol) {
-      return fresh(slot.mem.get(symbol)) || slot.disk.has(symbol);
+      return slot.mem.has(symbol) || slot.disk.has(symbol);
+    },
+    isStale(symbol) {
+      const hit = slot.mem.get(symbol);
+      if (hit) return Date.now() - hit.at >= maxAgeMs;
+      return slot.disk.isStale(symbol);
     },
     set(symbol, value) {
       const e = { at: Date.now(), value };

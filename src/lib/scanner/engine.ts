@@ -293,9 +293,13 @@ export async function runScan(
   );
 
   // Warm inside the pool, most-traded first so the names a user is likeliest
-  // to care about arrive before the long tail.
+  // to care about arrive before the long tail. A missing symbol and a stale
+  // one are queued the same way, but only the missing one is absent from the
+  // results below — a stale symbol keeps showing its last assembled record
+  // while this refreshes it, rather than dropping out of the table for
+  // however long the refresh takes.
   const uncached = pool
-    .filter((r) => !candCache.has(r.symbol))
+    .filter((r) => !candCache.has(r.symbol) || candCache.isStale(r.symbol))
     .sort((a, b) => (b.dollarVolume ?? 0) - (a.dollarVolume ?? 0));
 
   enqueue(

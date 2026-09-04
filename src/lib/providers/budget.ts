@@ -34,6 +34,24 @@ const utcDay = (): string => new Date().toISOString().slice(0, 10);
 function load(): Usage {
   const today = utcDay();
   if (memo && memo.day === today) return memo;
+  return reload(today);
+}
+
+/**
+ * Read the counter from disk, ignoring the in-memory copy.
+ *
+ * `load` memoises for the whole day, which is right for the read-only queries
+ * the settings page makes. It is wrong before a spend: the memo is per process,
+ * so a second process — a dev server alongside a test run, two workers, a
+ * restart — carries a stale view and its next write silently discards whatever
+ * the other one had counted. That was observed here: one provider's tally
+ * dropped from 16 to 2 mid-session, which is a spend cap quietly raising
+ * itself.
+ *
+ * Re-reading costs one small synchronous read per reservation, a few times a
+ * request. Being wrong costs real money at a provider.
+ */
+function reload(today = utcDay()): Usage {
   try {
     const parsed = JSON.parse(readFileSync(STORE, "utf8")) as Usage;
     memo = parsed.day === today ? parsed : { day: today, spent: {} };
@@ -73,7 +91,8 @@ export function remainingToday(provider: string): number {
  * after the fact would let one oversized batch blow through the budget.
  */
 export function trySpend(provider: string, credits: number): boolean {
-  const u = load();
+  // Against the on-disk total, not this process's memo — see `reload`.
+  const u = reload();
   const spent = u.spent[provider] ?? 0;
   if (spent + credits > budgetFor(provider)) return false;
   u.spent[provider] = spent + credits;
@@ -83,7 +102,7 @@ export function trySpend(provider: string, credits: number): boolean {
 
 /** Hand credits back when a reserved call failed before reaching the provider. */
 export function refund(provider: string, credits: number): void {
-  const u = load();
+  const u = reload();
   u.spent[provider] = Math.max(0, (u.spent[provider] ?? 0) - credits);
   persist(u);
 }

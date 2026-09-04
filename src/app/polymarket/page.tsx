@@ -1,15 +1,17 @@
-import { Chip, Note, Panel } from "@/components/shell/ui";
+import { Chip, Note } from "@/components/shell/ui";
 import { getHealth, discoverMarkets, REGION_NOTE } from "@/lib/providers/polymarket";
 import { MARKET_CATEGORIES } from "@/lib/events/market-categories";
-import { MarketTable } from "@/components/polymarket/market-table";
+import { PredictionBoard } from "@/components/polymarket/prediction-board";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Polymarket" };
 
 /**
- * Standalone prediction-market intelligence. Read-only: this page discovers
- * and displays public market data and has no wallet, order or account path of
- * any kind. Every request runs server-side.
+ * PREDICTION MARKETS — a Polymarket-themed desk inside PORTFOLIO EG.
+ * Probability-dominant cards, YES/NO contract feel, odds movement and trend
+ * tracks. Read-only: this page discovers and displays public market data and
+ * has no wallet, order or account path of any kind. Every request runs
+ * server-side; anything the provider does not return renders as absent.
  */
 export default async function PolymarketPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -25,54 +27,48 @@ export default async function PolymarketPage(props: {
     : [];
 
   return (
-    <div className="flex flex-col gap-3">
-      <Note tone={health.marketDataOperational ? "info" : "warn"}>
-        <span>
-          <strong>Market-implied probability, not objective probability.</strong> These are
-          prices traders are paying, which reflect positioning and risk appetite as much as
-          belief. Read-only: no wallet, no orders, no account.
+    <div className="flex flex-col gap-3" style={{ ["--tab-accent" as string]: "#818cf8" }}>
+      {/* Desk header */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-[var(--line)] px-3 py-2">
+        <h1 className="text-[14px] font-semibold tracking-tight">Prediction Markets</h1>
+        <span className="text-[10.5px] text-[var(--ink-3)]">
+          market-implied probabilities from Polymarket — positioning and risk appetite, not objective odds
         </span>
-      </Note>
-
-      <Panel title="Provider Health" subtitle="read-only data availability, checked separately per host" bodyClassName="p-0">
-        <div className="grid grid-cols-2 divide-x divide-y divide-[var(--line)] sm:grid-cols-5">
-          {([
-            ["Gamma (discovery)", health.gammaReachable],
-            ["CLOB (history)", health.clobReachable],
-            ["Data API", health.dataApiReachable],
-            ["Trading region blocked", health.tradingRegionBlocked],
-            ["Market data operational", health.marketDataOperational],
-          ] as const).map(([label, ok]) => {
-            // The two negative-sense rows read the opposite way round.
-            const isBlockRow = label === "Trading region blocked";
-            const good = isBlockRow ? !ok : ok;
-            return (
-              <div key={label} className="px-3 py-2">
-                <div className="text-[9.5px] text-[var(--ink-3)]">{label}</div>
-                <div className={good ? "text-[12px] text-emerald-400" : "text-[12px] text-rose-400"}>
-                  {ok ? "YES" : "NO"}
-                </div>
-              </div>
-            );
-          })}
+        <div className="ml-auto flex items-center gap-2 text-[9.5px]">
+          <Chip tone={health.marketDataOperational ? "pos" : "warn"}>
+            {health.marketDataOperational ? "DATA LIVE" : "DATA UNAVAILABLE"}
+          </Chip>
+          <Chip tone="neutral">READ-ONLY</Chip>
+          <span
+            className="text-[var(--ink-3)]"
+            title={`Gamma ${health.gammaReachable ? "up" : "down"} · CLOB ${health.clobReachable ? "up" : "down"} · Data API ${health.dataApiReachable ? "up" : "down"} · trading region ${health.tradingRegionBlocked ? "blocked" : "open"} — ${health.detail}`}
+          >
+            checked {health.checkedAt.slice(11, 16)} UTC
+          </span>
         </div>
-        <div className="border-t border-[var(--line)] px-3 py-1.5 text-[9.5px] leading-snug text-[var(--ink-3)]">
-          {health.detail} Checked {health.checkedAt.slice(0, 16).replace("T", " ")}. Trading
-          restriction and read-only data availability are tracked separately — this section stays
-          on whenever discovery works.
-        </div>
-      </Panel>
+      </div>
 
       {!health.marketDataOperational ? (
-        <Panel title="Markets" bodyClassName="p-0">
-          <div className="px-3 py-4 text-[11px] leading-snug text-[var(--ink-3)]">
-            <Chip tone="warn">POLYMARKET READ-ONLY DATA UNAVAILABLE FROM CURRENT SERVER</Chip>
-            <p className="mt-2">{REGION_NOTE}</p>
-          </div>
-        </Panel>
+        <Note tone="warn">
+          <span>
+            <strong>POLYMARKET READ-ONLY DATA UNAVAILABLE FROM CURRENT SERVER.</strong> {REGION_NOTE}{" "}
+            Nothing is synthesized in its place.
+          </span>
+        </Note>
       ) : (
-        <MarketTable markets={markets} categories={MARKET_CATEGORIES.map((c) => ({ id: c.id, label: c.label }))} active={active.id} />
+        <PredictionBoard
+          markets={markets}
+          categories={MARKET_CATEGORIES.map((c) => ({ id: c.id, label: c.label }))}
+          active={active.id}
+          activeLabel={active.label}
+        />
       )}
+
+      <p className="text-[9.5px] leading-snug text-[var(--ink-3)]">
+        Prices ARE the probabilities: a 63¢ YES contract is the market paying 63% implied odds. 24h/7d
+        movement comes from the provider; the trend track is the official price history for the
+        highest-volume markets. No wallet, no orders, no account.
+      </p>
     </div>
   );
 }

@@ -51,3 +51,8 @@ data/.cache/
 # Personal holdings. Never packaged for distribution — a recipient uploads
 # their own workbook on /settings, or points PORTFOLIO_FILE at one.
 data/*.xlsx
+
+# Claude harness artifacts (not app code)
+.agents/
+.claude/
+skills-lock.json

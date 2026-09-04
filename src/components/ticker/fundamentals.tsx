@@ -40,6 +40,7 @@ export function Fundamentals({
   earnings,
   insiders,
   lastPrice,
+  source = "Finnhub",
 }: {
   symbol: string;
   metrics: KeyMetrics | null;
@@ -48,6 +49,8 @@ export function Fundamentals({
   earnings: EarningsPoint[] | null;
   insiders: InsiderTx[] | null;
   lastPrice: number | null;
+  /** Provenance label for panel subtitles — "EODHD" for US, legacy otherwise. */
+  source?: string;
 }) {
   const quality = scoreQuality(metrics);
   const valuation = valuationRows(metrics);
@@ -92,7 +95,7 @@ export function Fundamentals({
       {/* ------------------------------------------------------- financials */}
       <Panel
         title="Financials"
-        subtitle={cur ? `latest reported quarter Q${cur.quarter} ${cur.year} · Finnhub` : "Finnhub"}
+        subtitle={cur ? `latest reported quarter Q${cur.quarter} ${cur.year} · ${source}` : source}
         bodyClassName="p-0"
       >
         {!cur ? (
@@ -211,7 +214,7 @@ export function Fundamentals({
             className="border-t border-[var(--line)] px-3 py-2 text-[9.5px] leading-snug text-[var(--ink-3)]"
             title="Growth: revenue and EPS YoY. Profitability: net, operating and gross margins. Cash Flow: price to free cash flow per share. Balance Sheet: current ratio and debt/equity. Efficiency: ROE and ROA. Each is a clamped linear grade; components with no data are dropped rather than scored zero."
           >
-            Not an industry-standard score. Five equally-weighted components from Finnhub TTM
+            Not an industry-standard score. Five equally-weighted components from provider TTM
             metrics — hover for the definitions.
           </div>
         </Panel>
@@ -330,7 +333,7 @@ export function Fundamentals({
         {/* ------------------------------------------------------ earnings */}
         <Panel
           title="Earnings Surprises"
-          subtitle="reported EPS vs consensus · Finnhub"
+          subtitle={`reported EPS vs consensus · ${source}`}
           bodyClassName="p-0"
         >
           {!earnings?.length ? (

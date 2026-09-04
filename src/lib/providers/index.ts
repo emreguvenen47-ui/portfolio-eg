@@ -1,6 +1,7 @@
 import "server-only";
 import type { DataStatus, FxRate, HistorySeries, MarketDataProvider, Quote } from "@/lib/types";
 import { createTwelveDataProvider } from "./twelvedata";
+import { createEodhdProvider, eodhdKeyPresent } from "./eodhd";
 import { createYahooProvider } from "./yahoo";
 import { createFinnhubProvider, finnhubKey, finnhubSupports } from "./finnhub";
 import { cnbcSupports, createCnbcProvider } from "./cnbc";
@@ -228,6 +229,7 @@ export interface ResolvedProvider {
 /** Providers billed per request against a daily allowance. */
 const METERED = new Set(["twelvedata"]);
 
+let eodhdSingleton: MarketDataProvider | null = null;
 let yahooSingleton: MarketDataProvider | null = null;
 let cnbcSingleton: MarketDataProvider | null = null;
 let nasdaqSingleton: MarketDataProvider | null = null;
@@ -240,6 +242,8 @@ export function resolveProvider(): ResolvedProvider {
   const twelveDataKeyPresent = Boolean(tdKey && tdKey.length > 10);
   const fhKey = finnhubKey();
 
+  if (eodhdKeyPresent()) eodhdSingleton ??= createEodhdProvider();
+  const eodhd = eodhdKeyPresent() ? eodhdSingleton : null;
   yahooSingleton ??= createYahooProvider();
   cnbcSingleton ??= createCnbcProvider();
   nasdaqSingleton ??= createNasdaqProvider();
@@ -263,15 +267,19 @@ export function resolveProvider(): ResolvedProvider {
   // Twelve Data's daily credits are spent and Yahoo is throttling, which on a
   // free stack is the common case rather than the edge case. The keyless FX
   // fixing stays last so a currency pair still resolves to a real rate.
+  // EODHD (paid, 100k req/day, verified US+INDX+FOREX coverage) leads every
+  // ordering: it is the primary provider, the free-tier sources are fallbacks.
+  // BIST symbols are declined inside the EODHD provider itself and fall
+  // through to Yahoo, the only configured source that carries them.
   const preference = (process.env.MARKET_PROVIDER ?? "auto").trim().toLowerCase();
   const ordered =
     preference === "twelvedata"
-      ? [twelve, finnhub, yahooSingleton, cnbcSingleton, erApiSingleton, nasdaqSingleton]
+      ? [twelve, eodhd, finnhub, yahooSingleton, cnbcSingleton, erApiSingleton, nasdaqSingleton]
       : preference === "yahoo"
-        ? [yahooSingleton, cnbcSingleton, erApiSingleton, nasdaqSingleton]
+        ? [yahooSingleton, eodhd, cnbcSingleton, erApiSingleton, nasdaqSingleton]
         : preference === "finnhub"
-          ? [finnhub, yahooSingleton, cnbcSingleton, erApiSingleton, nasdaqSingleton]
-          : [finnhub, twelve, yahooSingleton, cnbcSingleton, erApiSingleton, nasdaqSingleton];
+          ? [finnhub, eodhd, yahooSingleton, cnbcSingleton, erApiSingleton, nasdaqSingleton]
+          : [eodhd, finnhub, twelve, yahooSingleton, cnbcSingleton, erApiSingleton, nasdaqSingleton];
 
   const chain = ordered
     .filter((p): p is MarketDataProvider => Boolean(p))

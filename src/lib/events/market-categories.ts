@@ -10,4 +10,8 @@ export const MARKET_CATEGORIES: { id: string; label: string; query: MarketQuery 
   { id: "ai", label: "AI", query: { anyOf: ["ai ", "openai", "gpt", "anthropic", "artificial intelligence", "agi"], limit: 30 } },
   { id: "energy", label: "ENERGY", query: { anyOf: ["oil", "opec", "gas", "crude", "energy"], limit: 30 } },
   { id: "china", label: "CHINA", query: { anyOf: ["china", "taiwan", "yuan", "beijing"], limit: 30 } },
+  { id: "crypto", label: "CRYPTO", query: { anyOf: ["bitcoin", "btc", "ethereum", "eth ", "solana", "crypto", "stablecoin"], limit: 30 } },
+  { id: "tech", label: "TECH / AI", query: { anyOf: ["openai", "gpt", "anthropic", "artificial intelligence", "agi", "nvidia", "apple", "tesla", "spacex", "chip"], limit: 30 } },
+  { id: "recession", label: "RECESSION", query: { anyOf: ["recession", "soft landing", "hard landing", "bear market", "s&p"], limit: 30 } },
+  { id: "companies", label: "COMPANIES", query: { anyOf: ["apple", "tesla", "nvidia", "microsoft", "google", "amazon", "meta ", "earnings", "ipo", "acquisition"], limit: 30 } },
 ];

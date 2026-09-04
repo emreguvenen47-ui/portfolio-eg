@@ -94,7 +94,17 @@ export function roic(p: FinancialPeriod, trailing: FinancialPeriod[]): number | 
   const taxRate = tax !== null && pretax !== null && pretax > 0 ? Math.min(0.5, tax / pretax) : null;
   if (taxRate === null) return null;
 
-  const invested = p.equity + debt - (p.cash ?? 0);
+  // AVERAGE invested capital between this quarter and the same quarter a year
+  // ago when the series carries it — ending capital alone overstates returns
+  // for heavy repurchasers (ratio-audit finding). Falls back to ending.
+  const endInvested = p.equity + debt - (p.cash ?? 0);
+  const yearAgo = trailing.length >= 5 ? trailing[trailing.length - 5] : undefined;
+  const yaDebt = yearAgo ? totalDebt(yearAgo) : null;
+  const yaInvested =
+    yearAgo && yearAgo.equity !== null && yaDebt !== null
+      ? yearAgo.equity + yaDebt - (yearAgo.cash ?? 0)
+      : null;
+  const invested = yaInvested !== null ? (endInvested + yaInvested) / 2 : endInvested;
   if (invested <= 0) return null;
   return ((ebit * (1 - taxRate)) / invested) * 100;
 }

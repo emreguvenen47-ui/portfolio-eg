@@ -12,9 +12,19 @@ import { writablePath } from "./writable-dir";
  * allowance, so the scanner effectively started from nothing each time and
  * never accumulated coverage.
  *
- * This is a cache, not a store: entries carry their own age, a corrupt or
- * missing file is simply an empty cache, and nothing here is user data. It is
- * gitignored and safe to delete.
+ * This is a cache, not a store: a corrupt or missing file is simply an empty
+ * cache, and nothing here is user data. It is gitignored and safe to delete.
+ *
+ * `maxAgeMs` governs staleness, not survival. An entry past its age is still
+ * returned by `get`/`has` — it is only reported as stale by `isStale`, which
+ * callers use to decide whether to refresh it in the background. Earlier this
+ * expired an entry by deleting it on read, which is worse than simply serving
+ * a slightly old value: the record vanished from the results the moment it
+ * turned a day old, which looked exactly like data loss (an assembled company
+ * disappearing from the table) rather than what it actually was (a company
+ * due for a refresh). The scanner already re-queues stale symbols in the
+ * background — see `isStale` below — so nothing about that pipeline required
+ * the delete-on-read behaviour; it only made the visible symptom worse.
  *
  * Reads stay in memory. The file is loaded once per process and written back
  * on a debounce, because a six-thousand-entry map is not something to
@@ -61,11 +71,14 @@ function load<T>(name: string, maxAgeMs: number): Slot<T> {
     const path = join(DIR, `${name}.json`);
     if (existsSync(path)) {
       const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, Entry<T>>;
-      const now = Date.now();
+      // Loaded regardless of age. An idle process (overnight, a weekend) used
+      // to come back up with an empty-looking cache purely because everything
+      // in it had crossed the age line while nobody was watching — the exact
+      // "system was open and the data disappeared" complaint this file exists
+      // to prevent. Age only decides whether `isStale` flags a symbol for a
+      // background refresh, never whether it is available at all.
       for (const [k, v] of Object.entries(parsed)) {
-        // Expired on the way in, so a long-idle process does not resurrect
-        // month-old fundamentals as if they were current.
-        if (v && typeof v.at === "number" && now - v.at < maxAgeMs) slot.data.set(k, v);
+        if (v && typeof v.at === "number") slot.data.set(k, v);
       }
     }
   } catch {
@@ -102,8 +115,12 @@ function flush<T>(name: string, slot: Slot<T>): void {
 }
 
 export interface DiskCache<T> {
+  /** Returns the value whether or not it is stale — see `isStale`. */
   get(key: string): T | undefined;
+  /** True if an entry exists at all, regardless of age. */
   has(key: string): boolean;
+  /** True only if an entry exists AND has crossed `maxAgeMs`. False for a missing entry — that is "absent", not "stale". */
+  isStale(key: string): boolean;
   set(key: string, value: T): void;
   delete(key: string): void;
   size(): number;
@@ -113,25 +130,22 @@ export interface DiskCache<T> {
 
 /**
  * @param name    file name under data/.cache
- * @param maxAgeMs entries older than this are dropped on read and on load
+ * @param maxAgeMs how old an entry may get before `isStale` flags it for a refresh — entries are never dropped for age alone
  */
 export function diskCache<T>(name: string, maxAgeMs: number): DiskCache<T> {
   return {
     get(key) {
       const slot = load<T>(name, maxAgeMs);
-      const hit = slot.data.get(key);
-      if (!hit) return undefined;
-      if (Date.now() - hit.at >= maxAgeMs) {
-        slot.data.delete(key);
-        scheduleFlush(name, slot);
-        return undefined;
-      }
-      return hit.value;
+      return slot.data.get(key)?.value;
     },
     has(key) {
       const slot = load<T>(name, maxAgeMs);
+      return slot.data.has(key);
+    },
+    isStale(key) {
+      const slot = load<T>(name, maxAgeMs);
       const hit = slot.data.get(key);
-      return hit !== undefined && Date.now() - hit.at < maxAgeMs;
+      return hit !== undefined && Date.now() - hit.at >= maxAgeMs;
     },
     set(key, value) {
       const slot = load<T>(name, maxAgeMs);

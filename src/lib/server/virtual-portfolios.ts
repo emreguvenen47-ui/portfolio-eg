@@ -61,6 +61,32 @@ export interface Trade {
   createdAt: string;
   /** Set when this trade is an option contract rather than shares. */
   option?: OptionLeg;
+  /** Trade plan attached at entry (paper trades opened from a setup). */
+  plan?: {
+    stop: number | null;
+    target1: number | null;
+    target2: number | null;
+  };
+  /**
+   * IMMUTABLE snapshot of what the engines said at entry. Written once when
+   * the trade opens and never updated — a signal that changes later must not
+   * rewrite the history this trade was taken on.
+   */
+  technicalSnapshot?: {
+    asOf: string;
+    signal: string;
+    setup: string;
+    score: number | null;
+    confidence: string;
+    weeklyRegime: string;
+    valuationView: string | null;
+    primarySupport: number | null;
+    primaryResistance: number | null;
+    stopStandard: number | null;
+    target1: number | null;
+    target2: number | null;
+    riskReward: number | null;
+  };
 }
 
 /** Cash a trade moves, respecting the contract multiplier. */

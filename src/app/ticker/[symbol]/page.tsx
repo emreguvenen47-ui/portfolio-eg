@@ -102,6 +102,7 @@ import {
 import { TechnicalTab } from "@/components/ticker/technical-tab";
 import { ValuationTab } from "@/components/ticker/valuation-tab";
 import { NewsTab } from "@/components/ticker/news-tab";
+import { OptionsTab } from "@/components/ticker/options-tab";
 import { EarningsTab } from "@/components/ticker/earnings-tab";
 import { FinancialsV2 } from "@/components/ticker/financials-v2";
 import { Chip as Tone } from "@/components/shell/ui";
@@ -666,7 +667,7 @@ export default async function TickerPage(props: {
           {/* -------------------------------------------- portfolio context */}
           {row && (
             <Panel title="In My Real Portfolio" bodyClassName="p-0">
-              <div className="grid grid-cols-2 divide-x divide-y divide-[var(--line)] sm:grid-cols-3 lg:grid-cols-6">
+              <div className="grid grid-cols-2 divide-x divide-y divide-[var(--line)] sm:grid-cols-4 lg:grid-cols-7">
                 <Kpi label="Position Value" value={fmtUsd(row.value)} />
                 <Kpi label="Current Weight" value={fmtPct(row.currentWeight, 1)} />
                 <Kpi
@@ -686,6 +687,25 @@ export default async function TickerPage(props: {
                   value={fmtPctPoints(row.contributionToReturn * 100)}
                   tone={row.contributionToReturn >= 0 ? "pos" : "neg"}
                 />
+                {(() => {
+                  // Breakeven PRICE for this position: the price at which the
+                  // marked value returns to cost — current price ÷ (1 + PnL%).
+                  // Derived from the same marks the P&L uses; no share count
+                  // is assumed because the workbook stores amounts, not shares.
+                  const be =
+                    last !== null && 1 + row.unrealizedPnlPct > 0
+                      ? last / (1 + row.unrealizedPnlPct)
+                      : null;
+                  const dist = be !== null && last !== null && last > 0 ? (be / last - 1) * 100 : null;
+                  return (
+                    <Kpi
+                      label="Breakeven"
+                      value={be === null ? "—" : fmtNum(be, be > 500 ? 0 : 2)}
+                      sub={dist === null ? undefined : `${dist >= 0 ? "+" : ""}${dist.toFixed(1)}% from here`}
+                      tone={(dist ?? 0) <= 0 ? "pos" : "neg"}
+                    />
+                  );
+                })()}
               </div>
             </Panel>
           )}
@@ -1002,6 +1022,16 @@ export default async function TickerPage(props: {
         ) : (
           <Panel title="News">
             <Empty>Company-specific news via EODHD covers US listings; BIST names have no news feed on this plan.</Empty>
+          </Panel>
+        ))}
+
+      {/* ========================================================== OPTIONS */}
+      {tab === "OPTIONS" &&
+        (!bist ? (
+          <OptionsTab symbol={symbol} />
+        ) : (
+          <Panel title="Options">
+            <Empty>Option chains are available for optionable US listings; the venue lists none for BIST.</Empty>
           </Panel>
         ))}
 

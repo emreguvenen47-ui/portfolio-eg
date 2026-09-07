@@ -1,6 +1,7 @@
 import { Chip, Note, Panel } from "@/components/shell/ui";
 import { CONGRESS_BLOCKER, MIN_SAMPLE, dedupe, summarise, withLag } from "@/lib/research/congress";
 import { getCongressTrades } from "@/lib/research/alt-data";
+import { allHealth } from "@/lib/research/congress-health";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Congress Trading" };
@@ -15,6 +16,13 @@ export const metadata = { title: "Congress Trading" };
 export default async function CongressPage() {
   const raw = await getCongressTrades().catch(() => []);
   const rows = dedupe(raw.map((t) => withLag(t)));
+  const health = allHealth(["fmp-congress", "capitol-trades"]);
+  const primary = health[0]!;
+  const isStale = primary.state === "STALE" || (rows.length > 0 && primary.state !== "LIVE");
+  const fmtIso = (iso: string | null) => (iso ? iso.slice(0, 16).replace("T", " ") + " UTC" : "never");
+  const cacheAge = (ms: number | null) =>
+    ms === null ? "no cache" : ms < 60_000 ? `${Math.round(ms / 1000)}s` : ms < 3_600_000 ? `${Math.round(ms / 60_000)}m` : `${(ms / 3_600_000).toFixed(1)}h`;
+  const stateTone = (st: string) => (st === "LIVE" ? "pos" : st === "STALE" ? "warn" : "neg") as "pos" | "warn" | "neg";
   const windows = [
     summarise(rows, 30, "30D"),
     summarise(rows, 90, "90D"),
@@ -30,6 +38,47 @@ export default async function CongressPage() {
           a filed disclosure, shown with both its transaction date and the date it became public.
         </span>
       </Note>
+
+      {/* Source health — SOURCE / STATUS / HTTP / LAST SUCCESS / LAST ATTEMPT / CACHE AGE */}
+      <Panel title="Source Health" subtitle="what each upstream actually said on its last attempt — never inferred" bodyClassName="p-0">
+        <table className="grid-table">
+          <thead>
+            <tr>
+              <th className="tl">Source</th>
+              <th className="tl">Status</th>
+              <th>HTTP</th>
+              <th className="tl">Last success</th>
+              <th className="tl">Last attempt</th>
+              <th>Cache age</th>
+              <th>Cached rows</th>
+              <th className="tl">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {health.map((h) => (
+              <tr key={h.source}>
+                <td className="tl font-semibold">{h.source}</td>
+                <td className="tl"><Chip tone={stateTone(h.state)}>{h.state}</Chip></td>
+                <td className="tabular-nums">{h.httpStatus ?? "—"}</td>
+                <td className="tl tabular-nums text-[10px]">{fmtIso(h.lastSuccess)}</td>
+                <td className="tl tabular-nums text-[10px]">{fmtIso(h.lastAttempt)}</td>
+                <td className="tabular-nums">{cacheAge(h.cacheAgeMs)}</td>
+                <td className="tabular-nums">{h.cachedRows}</td>
+                <td className="tl max-w-[260px] truncate text-[9.5px] text-[var(--ink-3)]" title={h.note ?? ""}>{h.note ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+
+      {isStale && rows.length > 0 && (
+        <Note tone="warn">
+          <span>
+            <strong>STALE.</strong> The upstream is currently unreachable; showing the last
+            successful data. Last successful update: {fmtIso(primary.lastSuccess)}.
+          </span>
+        </Note>
+      )}
 
       {rows.length === 0 ? (
         <Panel title="Congressional Trading" bodyClassName="p-0">
@@ -82,12 +131,16 @@ export default async function CongressPage() {
                   <tr>
                     <th className="tl">Member</th>
                     <th className="tl">Chamber</th>
+                    <th className="tl">State</th>
+                    <th className="tl">Owner</th>
                     <th className="tl">Ticker</th>
+                    <th className="tl">Company</th>
                     <th className="tl">Side</th>
                     <th className="tl">Transaction</th>
                     <th className="tl">Disclosed</th>
                     <th>Lag</th>
                     <th className="tl">Reported value</th>
+                    <th className="tl">Filing</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -95,7 +148,12 @@ export default async function CongressPage() {
                     <tr key={i}>
                       <td className="tl">{r.politician}</td>
                       <td className="tl text-[10px] text-[var(--ink-3)]">{r.chamber}</td>
-                      <td className="tl font-semibold">{r.ticker}</td>
+                      <td className="tl text-[10px] text-[var(--ink-3)]">{r.state ?? "—"}</td>
+                      <td className="tl text-[10px] text-[var(--ink-3)]">{r.owner ?? "—"}</td>
+                      <td className="tl font-semibold">
+                        <a href={`/ticker/${r.ticker}`} className="hover:text-[var(--amber)]">{r.ticker}</a>
+                      </td>
+                      <td className="tl max-w-[180px] truncate text-[10px] text-[var(--ink-3)]" title={r.company ?? ""}>{r.company ?? "—"}</td>
                       <td className={r.side === "BUY" ? "tl text-emerald-400" : "tl text-rose-400"}>
                         {r.side}
                       </td>
@@ -109,6 +167,13 @@ export default async function CongressPage() {
                           ? "N/A"
                           : `$${(r.valueLow ?? 0).toLocaleString()} – $${(r.valueHigh ?? 0).toLocaleString()}`}
                       </td>
+                      <td className="tl text-[10px]">
+                        {r.sourceUrl ? (
+                          <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="text-cyan-300/80 hover:underline">filing ↗</a>
+                        ) : (
+                          <span className="text-[var(--ink-3)]">{r.source ?? "—"}</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -117,7 +182,10 @@ export default async function CongressPage() {
             <div className="border-t border-[var(--line)] px-3 py-1.5 text-[9.5px] leading-snug text-[var(--ink-3)]">
               Values are disclosed as ranges, never exact figures, so portfolio-level performance
               cannot be derived from them. Member performance statistics require at least{" "}
-              {MIN_SAMPLE} valid trades before they are shown at all.
+              {MIN_SAMPLE} valid trades before they are shown at all. Primary source: FMP&apos;s
+              republication of the official Senate EFD / House Clerk filings (each row links to its
+              filing); the ledger accumulates every pull, so history deepens over time. Last
+              successful update: {fmtIso(primary.lastSuccess)}.
             </div>
           </Panel>
         </>

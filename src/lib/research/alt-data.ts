@@ -31,6 +31,14 @@ export interface CongressTrade {
   /** Disclosed as a range, never an exact figure. */
   valueLow: number | null;
   valueHigh: number | null;
+  // ---- normalized extras (nullable; older sources may not carry them) ----
+  party?: "DEMOCRAT" | "REPUBLICAN" | "OTHER" | null;
+  state?: string | null;
+  company?: string | null;
+  owner?: string | null; // Self / Spouse / Joint / Child
+  source?: string | null; // provider id
+  sourceUrl?: string | null; // link to the actual filing
+  fetchedAt?: string | null;
 }
 
 export interface CongressSource {

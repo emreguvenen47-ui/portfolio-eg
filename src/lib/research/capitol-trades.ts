@@ -1,4 +1,6 @@
 import "server-only";
+import { diskCache } from "@/lib/server/disk-cache";
+import { inBackoff, reportAttempt } from "./congress-health";
 import type { CongressSource, CongressTrade } from "./alt-data";
 
 /**
@@ -24,6 +26,12 @@ const KEY = Symbol.for("pcc.capitoltrades");
 const cache: Map<string, { at: number; rows: CongressTrade[] }> = ((
   globalThis as unknown as Record<symbol, Map<string, { at: number; rows: CongressTrade[] }>>
 )[KEY] ??= new Map());
+
+const SOURCE = "capitol-trades";
+/** After a 429/403/503 the adapter stays hands-off — CloudFront blocks are
+ * never hammered, and the backoff itself is visible in the health record. */
+const BACKOFF_MS = 6 * 60 * 60_000;
+const lkg = diskCache<CongressTrade[]>("congress-capitoltrades-lkg", Number.POSITIVE_INFINITY);
 
 interface BffTrade {
   txDate?: string;
@@ -53,6 +61,8 @@ async function fetchTrades(ticker: string): Promise<CongressTrade[]> {
   const key = ticker || "__all__";
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
+  const cachedRows = lkg.get(key) ?? [];
+  if (inBackoff(SOURCE, BACKOFF_MS)) return cachedRows;
 
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
@@ -69,7 +79,10 @@ async function fetchTrades(ticker: string): Promise<CongressTrade[]> {
         referer: "https://www.capitoltrades.com/",
       },
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      reportAttempt(SOURCE, { ok: false, httpStatus: res.status, cachedRows: cachedRows.length, cacheAgeMs: null, note: "CloudFront refused the request" });
+      return cachedRows;
+    }
     const json = (await res.json()) as { data?: BffTrade[] };
     const rows: CongressTrade[] = (json.data ?? [])
       .map((t) => {
@@ -86,12 +99,17 @@ async function fetchTrades(ticker: string): Promise<CongressTrade[]> {
           valueHigh: hi,
         };
       })
-      .filter((r) => r.ticker && r.transactionDate && (side_ok(r.side)));
+      .filter((r) => r.ticker && r.transactionDate && (side_ok(r.side)))
+      .map((r) => ({ ...r, source: SOURCE, fetchedAt: new Date().toISOString() }));
     cache.set(key, { at: Date.now(), rows });
+    lkg.set(key, rows);
+    lkg.flushNow();
+    reportAttempt(SOURCE, { ok: true, httpStatus: 200, rows: rows.length, cachedRows: rows.length, cacheAgeMs: 0 });
     return rows;
-  } catch {
-    cache.set(key, { at: Date.now(), rows: hit?.rows ?? [] });
-    return hit?.rows ?? [];
+  } catch (e) {
+    reportAttempt(SOURCE, { ok: false, httpStatus: null, cachedRows: cachedRows.length, cacheAgeMs: null, note: (e as Error).message.slice(0, 120) });
+    cache.set(key, { at: Date.now(), rows: cachedRows });
+    return cachedRows;
   } finally {
     clearTimeout(timer);
   }

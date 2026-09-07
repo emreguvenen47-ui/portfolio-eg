@@ -1,5 +1,6 @@
 import { eodhdEtfSource } from "@/lib/data/eodhd/etf";
 import { capitolTradesSource } from "@/lib/research/capitol-trades";
+import { fmpCongressSource } from "@/lib/research/fmp-congress";
 import "server-only";
 import { registerHoldingsSource } from "./etf-holdings";
 import { registerReleaseSource } from "@/lib/events/analogues";
@@ -65,7 +66,9 @@ export function registerProviders(): void {
 // the source lights up every ETF surface (holdings, overlap, reverse lookup).
 if (process.env.EODHD_API_KEY) registerHoldingsSource(eodhdEtfSource);
 
-// Congressional disclosures: Capitol Trades' public JSON backend (approach
-// adapted from MIT mcp-capitol-trades). Fails soft where CloudFront refuses
-// the network — the Congress page keeps its honest blocker in that case.
+// Congressional disclosures — PRIMARY: FMP's republication of the official
+// Senate EFD / House Clerk filings (API-key feed, verified live). SECONDARY:
+// Capitol Trades' backend (adapted from MIT mcp-capitol-trades), which
+// CloudFront blocks on some networks — it fails soft with a 6h backoff.
+registerAltSource("congress", fmpCongressSource);
 registerAltSource("congress", capitolTradesSource);

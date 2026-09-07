@@ -70,6 +70,8 @@ export function MacroPage({
       <Chip tone="amber">CRYPTO · {macro.code.replace(".CC", "")}</Chip>
     ) : macro.kind === "INDEX" ? (
       <Chip tone="info">INDEX · {macro.code.replace(".INDX", "")}</Chip>
+    ) : macro.kind === "FX" ? (
+      <Chip tone="info">FX · {macro.code.replace(".FOREX", "")}</Chip>
     ) : macro.kind === "PROXY_ETF" ? (
       <Chip tone="warn" title={macro.note}>COMMODITY · ETF PROXY ({macro.code.replace(".US", "")})</Chip>
     ) : (

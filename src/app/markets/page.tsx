@@ -6,6 +6,7 @@ import { MARKET_INSTRUMENTS } from "@/lib/portfolio/config";
 import { fmtNum, fmtPctPoints, signClass } from "@/lib/format";
 import { ScannerShell } from "@/components/markets/scanner-shell";
 import { NewsImpact } from "@/components/markets/news-impact";
+import { MarketPulse } from "@/components/markets/market-pulse";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,8 @@ export default async function MarketsPage() {
 
   return (
     <div className="flex flex-col gap-3">
+      <MarketPulse />
+
       {bundle.status === "UNAVAILABLE" && (
         <Note tone="warn">
           <span>

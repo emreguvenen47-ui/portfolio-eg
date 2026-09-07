@@ -103,6 +103,9 @@ import { TechnicalTab } from "@/components/ticker/technical-tab";
 import { ValuationTab } from "@/components/ticker/valuation-tab";
 import { NewsTab } from "@/components/ticker/news-tab";
 import { OptionsTab } from "@/components/ticker/options-tab";
+import { CompanyIntelPanel, RiskProfilePanel } from "@/components/ticker/intel-panels";
+import { buildRiskProfile } from "@/lib/engines/risk-metrics";
+import { getUniverseRows } from "@/lib/data/opportunities";
 import { EarningsTab } from "@/components/ticker/earnings-tab";
 import { FinancialsV2 } from "@/components/ticker/financials-v2";
 import { Chip as Tone } from "@/components/shell/ui";
@@ -1115,6 +1118,29 @@ export default async function TickerPage(props: {
       {/* ========================================================= RESEARCH */}
       {tab === "RESEARCH" && (
         <>
+          {eg && (() => {
+            // PitchBook-style intel + comparables from the precomputed universe.
+            const industry = eg.snapshot.identity.industry;
+            const peers = industry
+              ? getUniverseRows()
+                  .filter((r) => r.industry === industry && r.symbol !== symbol)
+                  .slice(0, 8)
+              : [];
+            return <CompanyIntelPanel snapshot={eg.snapshot} peers={peers} />;
+          })()}
+
+          {await (async () => {
+            // Risk profile vs S&P 500 — same candles the page already holds.
+            if (candles.length < 60) return null;
+            const bench = await within(PANEL_MS, getHistoricalPrices("^GSPC", 600).catch(() => ({ candles: [] as Candle[] })), { candles: [] as Candle[] });
+            const stdStop = techDecision?.stops.find((st) => st.kind === "STANDARD") ?? techDecision?.stops[0] ?? null;
+            const stopPct = stdStop && last !== null && last > 0 ? ((last - stdStop.price) / last) * 100 : null;
+            const risk = buildRiskProfile(candles, bench.candles.length ? bench.candles : null, {
+              stopDistancePct: stopPct,
+              benchmarkLabel: "S&P 500",
+            });
+            return risk ? <RiskProfilePanel risk={risk} /> : null;
+          })()}
           {eg?.snapshot.identity.description && (
             <Panel title="Business" subtitle={`${eg.snapshot.identity.sector ?? ""} · ${eg.snapshot.identity.industry ?? ""} · ${eg.snapshot.identity.country ?? ""}${eg.snapshot.identity.employees ? ` · ${eg.snapshot.identity.employees.toLocaleString()} employees` : ""}`}>
               <p className="max-w-[100ch] text-[11.5px] leading-relaxed text-[var(--ink-2)]">

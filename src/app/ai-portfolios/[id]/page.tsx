@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SeedPaperButton } from "@/components/ai-builder/seed-paper-button";
 import { notFound } from "next/navigation";
 import { Chip, Empty, Kpi, Note, Panel } from "@/components/shell/ui";
 import { PortfolioEditor } from "@/components/ai-builder/portfolio-editor";
@@ -87,6 +88,7 @@ export default async function SavedPortfolioPage(props: PageProps<"/ai-portfolio
         </Link>
         <h1 className="text-[16px] font-semibold">{portfolio.name}</h1>
         <Chip tone="info">{portfolio.profile?.investorType ?? "Saved portfolio"}</Chip>
+        <SeedPaperButton aiPortfolioId={portfolio.id} name={portfolio.name} />
         <span className="text-[10px] text-[var(--ink-3)]">
           created {fmtTime(portfolio.baseline.at || portfolio.createdAt)}
         </span>

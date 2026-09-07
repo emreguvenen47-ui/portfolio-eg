@@ -1,106 +1,141 @@
 import "@/lib/providers/register";
 import { NextResponse } from "next/server";
-import { getHistories, getQuotes } from "@/lib/providers";
-import { getMetrics, getFinancials, getRecommendations, getInsiders } from "@/lib/providers/fundamentals";
-import { compare, type CompareInput } from "@/lib/research/compare";
-import { ordered } from "@/lib/research/statements";
-import { analyseInsiders } from "@/lib/research/insiders";
-import { analyseAnalysts } from "@/lib/research/analysts";
-import { buildHealth } from "@/lib/research/health";
-import { buildSmartMoney } from "@/lib/research/smart-money";
-import { scanSymbol } from "@/lib/portfolio/scanner";
-import { technicalState } from "@/lib/portfolio/alert-engine";
-import { getCatalysts } from "@/lib/events/catalysts";
-import { valuationRows } from "@/lib/portfolio/quality-score";
+import { getHistoricalPrices, getQuotes } from "@/lib/providers";
+import { getCompanySnapshot } from "@/lib/data/eodhd/fundamentals";
+import { buildTechnicalDecision } from "@/lib/engines/technical-v3";
+import { computeValuation } from "@/lib/engines/valuation";
+import { buildRiskProfile } from "@/lib/engines/risk-metrics";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
- * Comparison data for 2–5 symbols.
- *
- * Everything is assembled from the existing cached providers — fundamentals
- * are on a daily cache, prices on the shared quote clock. No model is called.
+ * COMPARISON DATA for 2–5 symbols — canonical stack only: EODHD snapshot,
+ * V3 technical decision, valuation models, risk profile. The same engines the
+ * ticker page uses, so a number here always matches the number there.
  */
+
+export interface CompareRow {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  price: number | null;
+  marketCap: number | null;
+  // valuation
+  peTtm: number | null;
+  forwardPe: number | null;
+  priceToSales: number | null;
+  priceToBook: number | null;
+  evToEbitda: number | null;
+  fcfYield: number | null; // fraction
+  upsidePct: number | null;
+  valuationConfidence: string | null;
+  // growth & profitability
+  revenueGrowthYoY: number | null; // fraction
+  epsGrowthFwd: number | null; // fraction, next-FY est vs TTM
+  grossMargin: number | null;
+  operatingMargin: number | null;
+  netMargin: number | null;
+  roe: number | null;
+  roic: number | null;
+  // balance
+  netDebtToEbitda: number | null;
+  currentRatio: number | null;
+  // technical
+  signal: string | null;
+  setup: string | null;
+  technicalScore: number | null;
+  riskReward: number | null;
+  // risk
+  beta: number | null;
+  realizedVolPct: number | null;
+  maxDrawdownPct: number | null;
+  // performance
+  perf1M: number | null;
+  perf6M: number | null;
+  perf1Y: number | null;
+  /** Weekly closes over ~1y, normalized to 100 at the start (chart). */
+  series: Array<{ date: string; value: number }>;
+}
+
+const perf = (candles: Array<{ close: number }>, bars: number): number | null => {
+  if (candles.length < 2) return null;
+  const last = candles[candles.length - 1]!.close;
+  const ref = candles[Math.max(0, candles.length - 1 - bars)]?.close;
+  return ref && ref > 0 ? Number(((last / ref - 1) * 100).toFixed(1)) : null;
+};
+
 export async function GET(req: Request) {
   const raw = new URL(req.url).searchParams.get("symbols") ?? "";
-  const symbols = [
-    ...new Set(
-      raw
-        .split(",")
-        .map((s) => s.trim().toUpperCase())
-        .filter(Boolean),
-    ),
-  ].slice(0, 5);
-
+  const symbols = [...new Set(raw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 5);
   if (symbols.length < 2) {
     return NextResponse.json({ error: "Give between 2 and 5 symbols" }, { status: 400 });
   }
 
-  const [quotes, histories] = await Promise.all([
-    getQuotes(symbols, { maxAgeMs: 5 * 60_000 }).catch(() => ({}) as Awaited<ReturnType<typeof getQuotes>>),
-    getHistories(symbols, 400).catch(() => ({}) as Awaited<ReturnType<typeof getHistories>>),
+  const [quotes, bench] = await Promise.all([
+    getQuotes(symbols).catch(() => ({}) as Awaited<ReturnType<typeof getQuotes>>),
+    getHistoricalPrices("^GSPC", 600).catch(() => ({ candles: [] as Array<{ date: string; close: number; high: number; low: number; volume?: number; open: number }> })),
   ]);
 
-  const inputs: CompareInput[] = await Promise.all(
-    symbols.map(async (symbol) => {
-      const [metrics, financials, recs, insiders, catalysts] = await Promise.all([
-        getMetrics(symbol).catch(() => null),
-        getFinancials(symbol).catch(() => null),
-        getRecommendations(symbol).catch(() => null),
-        getInsiders(symbol).catch(() => null),
-        getCatalysts(symbol).catch(() => []),
-      ]);
+  const rows: CompareRow[] = [];
+  for (const symbol of symbols) {
+    const [snap, hist] = await Promise.all([
+      getCompanySnapshot(symbol).catch(() => null),
+      getHistoricalPrices(symbol, 600).catch(() => ({ candles: [] })),
+    ]);
+    const candles = hist.candles;
+    const last = candles.at(-1)?.close ?? quotes[symbol]?.price ?? null;
+    const d = candles.length >= 60 ? buildTechnicalDecision(symbol, candles) : null;
+    const v = snap && last !== null ? computeValuation(snap, last) : null;
+    const risk = candles.length >= 60 ? buildRiskProfile(candles, bench.candles.length ? bench.candles : null) : null;
 
-      const candles = histories[symbol]?.candles ?? [];
-      const quote = quotes[symbol] ?? null;
-      const periods = ordered(financials ?? [], 8);
-      const last = quote?.price ?? candles.at(-1)?.close ?? null;
-      const tech = technicalState(candles, last);
-      const insiderReport = insiders?.length ? analyseInsiders(insiders) : null;
-      const analysts = analyseAnalysts(recs);
-      const health = buildHealth(metrics, periods, symbol);
+    // Weekly-ish normalized series for the relative chart.
+    const year = candles.slice(-253);
+    const base = year[0]?.close ?? null;
+    const series =
+      base && base > 0
+        ? year.filter((_, i) => i % 5 === 0 || i === year.length - 1).map((c) => ({ date: c.date, value: Number(((c.close / base) * 100).toFixed(2)) }))
+        : [];
 
-      const valRows = valuationRows(metrics).filter((r) => r.verdict !== "N/A");
-      const valSum = valRows.reduce(
-        (a, r) => a + (r.verdict === "CHEAP" ? -1 : r.verdict === "EXPENSIVE" ? 1 : 0),
-        0,
-      );
-      const valuation =
-        valRows.length === 0
-          ? ("N/A" as const)
-          : valSum >= Math.ceil(valRows.length / 2)
-            ? ("EXPENSIVE" as const)
-            : valSum <= -Math.ceil(valRows.length / 2)
-              ? ("CHEAP" as const)
-              : ("FAIR" as const);
+    rows.push({
+      symbol,
+      name: snap?.identity.name ?? null,
+      sector: snap?.identity.sector ?? null,
+      price: last,
+      marketCap: snap?.marketCap ?? null,
+      peTtm: snap?.peTtm ?? null,
+      forwardPe: snap?.forwardPe ?? null,
+      priceToSales: snap?.priceToSales ?? null,
+      priceToBook: snap?.priceToBook ?? null,
+      evToEbitda: snap?.evToEbitda ?? null,
+      fcfYield: snap?.fcfYield ?? null,
+      upsidePct: v?.verdict === "OK" ? v.upsidePct : null,
+      valuationConfidence: v?.verdict === "OK" ? v.confidence : v ? "INVALID" : null,
+      revenueGrowthYoY: snap?.revenueGrowthYoY ?? null,
+      epsGrowthFwd:
+        snap?.epsEstimateNextYear != null && snap?.epsTtm != null && snap.epsTtm > 0
+          ? snap.epsEstimateNextYear / snap.epsTtm - 1
+          : null,
+      grossMargin: snap?.grossMarginTtm ?? null,
+      operatingMargin: snap?.operatingMarginTtm ?? null,
+      netMargin: snap?.netMarginTtm ?? null,
+      roe: snap?.roe ?? null,
+      roic: snap?.roic ?? null,
+      netDebtToEbitda: snap?.netDebtToEbitda ?? null,
+      currentRatio: snap?.currentRatio ?? null,
+      signal: d?.signal ?? null,
+      setup: d && d.setup !== "NONE" ? d.setup : null,
+      technicalScore: d?.score?.total ?? null,
+      riskReward: d?.riskReward ?? null,
+      beta: risk?.beta ?? null,
+      realizedVolPct: risk?.realizedVolPct ?? null,
+      maxDrawdownPct: risk?.maxDrawdownPct ?? null,
+      perf1M: perf(candles, 22),
+      perf6M: perf(candles, 128),
+      perf1Y: perf(candles, 253),
+      series,
+    });
+  }
 
-      const smart = buildSmartMoney({
-        insiders: insiderReport,
-        analysts,
-        guidance: { entries: [], trend: "N/A", available: false, note: "" },
-        health,
-        metrics,
-        technical: tech?.state ?? null,
-        valuation,
-      });
-
-      const scan = scanSymbol(symbol, candles, quote ?? undefined, metrics, []);
-
-      return {
-        symbol,
-        quote,
-        candles,
-        periods,
-        metrics,
-        recommendations: recs,
-        technical: tech?.state ?? null,
-        insiderSignal: insiderReport?.signal ?? null,
-        smartMoney: smart.score,
-        opportunityScore: scan.score,
-        nextCatalyst: catalysts[0] ? `${catalysts[0].date} ${catalysts[0].title}` : null,
-      } satisfies CompareInput;
-    }),
-  );
-
-  return NextResponse.json({ result: compare(inputs) });
+  return NextResponse.json({ rows });
 }

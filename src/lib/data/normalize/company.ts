@@ -182,6 +182,30 @@ export interface CompanySnapshot {
   insiderOwnershipPct: number | null;
   institutionalOwnershipPct: number | null;
 
+  /** Non-price, non-statement company intel (PitchBook-style facts). */
+  intel: {
+    officers: Array<{ name: string; title: string; yearBorn: string | null }>;
+    hq: string | null; // "Cupertino, CA, United States"
+    ipoDate: string | null;
+    fiscalYearEnd: string | null;
+    webUrl: string | null;
+    /** Top institutional holders with quarter-over-quarter change. */
+    institutions: Array<{
+      name: string;
+      pctOfShares: number | null;
+      shares: number | null;
+      changeShares: number | null;
+      changePct: number | null;
+      asOf: string | null;
+    }>;
+    funds: Array<{
+      name: string;
+      pctOfShares: number | null;
+      changePct: number | null;
+      asOf: string | null;
+    }>;
+  };
+
   // Statements (newest first)
   quarterly: StatementRow[];
   annual: StatementRow[];

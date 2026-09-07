@@ -1,4 +1,5 @@
 import { eodhdEtfSource } from "@/lib/data/eodhd/etf";
+import { capitolTradesSource } from "@/lib/research/capitol-trades";
 import "server-only";
 import { registerHoldingsSource } from "./etf-holdings";
 import { registerReleaseSource } from "@/lib/events/analogues";
@@ -63,3 +64,8 @@ export function registerProviders(): void {
 // EODHD carries top holdings + sector weights for US-listed funds; registering
 // the source lights up every ETF surface (holdings, overlap, reverse lookup).
 if (process.env.EODHD_API_KEY) registerHoldingsSource(eodhdEtfSource);
+
+// Congressional disclosures: Capitol Trades' public JSON backend (approach
+// adapted from MIT mcp-capitol-trades). Fails soft where CloudFront refuses
+// the network — the Congress page keeps its honest blocker in that case.
+registerAltSource("congress", capitolTradesSource);

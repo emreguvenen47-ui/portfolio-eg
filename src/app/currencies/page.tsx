@@ -2,6 +2,7 @@ import { getContext } from "@/lib/server/context";
 import { SampleBanner } from "@/components/shell/sample-banner";
 import { Kpi, Note, Panel, StatusBadge } from "@/components/shell/ui";
 import { PpfCalculator } from "@/components/currency/ppf-calculator";
+import { FxBoard } from "@/components/currency/fx-board";
 import { exposureBy } from "@/lib/portfolio/analytics";
 import { fmtNum, fmtPct, fmtPctPoints, fmtUsd, signClass } from "@/lib/format";
 
@@ -25,6 +26,7 @@ export default async function CurrenciesPage() {
   return (
     <div className="flex flex-col gap-3">
       <SampleBanner portfolio={ctx.portfolio} />
+      <FxBoard />
       <Panel bodyClassName="p-0">
         <div className="grid grid-cols-2 divide-x divide-y divide-[var(--line)] sm:grid-cols-3 lg:grid-cols-6">
           <Kpi

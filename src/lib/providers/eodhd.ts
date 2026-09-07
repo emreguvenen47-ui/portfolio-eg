@@ -8,6 +8,11 @@ const MACRO_ALIAS: Record<string, string> = Object.fromEntries(
   MACRO_TICKERS.map((t) => [t.alias, t.code]),
 );
 
+const ISO_CCY = new Set([
+  "USD", "EUR", "GBP", "JPY", "TRY", "CHF", "AUD", "NZD", "CAD", "CNY", "MXN",
+  "INR", "SEK", "NOK", "DKK", "PLN", "ZAR", "BRL", "KRW", "SGD", "HKD",
+]);
+
 /**
  * EODHD — the primary market-data provider.
  *
@@ -67,6 +72,12 @@ export function toEodhdCode(symbol: string): string | null {
   // Friendly macro aliases (GOLD, BTC, BRENT…) → real EODHD instruments.
   const macro = MACRO_ALIAS[s];
   if (macro) return macro;
+  // Plain 6-letter FX pairs (EURUSD, USDTRY…) → the FOREX feed.
+  if (/^[A-Z]{6}$/.test(s)) {
+    const a = s.slice(0, 3);
+    const b = s.slice(3);
+    if (ISO_CCY.has(a) && ISO_CCY.has(b)) return `${s}.FOREX`;
+  }
   if (isBistSymbol(s)) return null; // verified: no Borsa İstanbul on EODHD
   if (s.includes("/")) return null; // FX pairs are handled by getFxRate
   if (s.startsWith("^")) return INDEX_MAP[s] ?? null;

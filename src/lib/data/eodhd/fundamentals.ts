@@ -417,6 +417,40 @@ function normalize(symbol: string, raw: RawFundamentals): CompanySnapshot {
     insiderOwnershipPct: n(ss["PercentInsiders"]),
     institutionalOwnershipPct: n(ss["PercentInstitutions"]),
 
+    intel: (() => {
+      const addr = (g["AddressData"] ?? {}) as Record<string, unknown>;
+      const hqParts = [addr["City"], addr["State"], addr["Country"]].filter(
+        (x): x is string => typeof x === "string" && x.length > 0,
+      );
+      const holders = (kind: "Institutions" | "Funds") =>
+        Object.values((raw.Holders?.[kind] ?? {}) as Record<string, Record<string, unknown>>)
+          .map((r) => ({
+            name: String(r["name"] ?? ""),
+            pctOfShares: n(r["totalShares"]),
+            shares: n(r["currentShares"]),
+            changeShares: n(r["change"]),
+            changePct: n(r["change_p"]),
+            asOf: typeof r["date"] === "string" ? (r["date"] as string) : null,
+          }))
+          .filter((r) => r.name)
+          .sort((a, b) => (b.pctOfShares ?? 0) - (a.pctOfShares ?? 0));
+      return {
+        officers: Object.values((g["Officers"] ?? {}) as Record<string, Record<string, unknown>>)
+          .map((o) => ({
+            name: String(o["Name"] ?? "").replace(/\s+/g, " ").trim(),
+            title: String(o["Title"] ?? ""),
+            yearBorn: typeof o["YearBorn"] === "string" && o["YearBorn"] !== "NA" ? (o["YearBorn"] as string) : null,
+          }))
+          .filter((o) => o.name),
+        hq: hqParts.length ? hqParts.join(", ") : null,
+        ipoDate: typeof g["IPODate"] === "string" ? (g["IPODate"] as string) : null,
+        fiscalYearEnd: typeof g["FiscalYearEnd"] === "string" ? (g["FiscalYearEnd"] as string) : null,
+        webUrl: typeof g["WebURL"] === "string" ? (g["WebURL"] as string) : null,
+        institutions: holders("Institutions").slice(0, 15),
+        funds: holders("Funds").slice(0, 10).map(({ name, pctOfShares, changePct, asOf }) => ({ name, pctOfShares, changePct, asOf })),
+      };
+    })(),
+
     quarterly,
     annual,
     earningsHistory,
@@ -462,6 +496,9 @@ export async function getCompanySnapshot(
   if (!hit) {
     const persisted = disk.get(key);
     if (persisted) {
+      // Schema guard: snapshots persisted before the intel field existed load
+      // with an empty (honest) intel block rather than crashing consumers.
+      persisted.intel ??= { officers: [], hq: null, ipoDate: null, fiscalYearEnd: null, webUrl: null, institutions: [], funds: [] };
       const at = Date.parse(persisted.meta.fetchedAt) || 0;
       hit = { at, value: persisted };
       cache.set(key, hit);

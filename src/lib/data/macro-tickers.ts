@@ -13,7 +13,7 @@ export interface MacroTicker {
   /** Real EODHD code. */
   code: string;
   label: string;
-  kind: "COMMODITY" | "CRYPTO" | "INDEX" | "PROXY_ETF";
+  kind: "COMMODITY" | "CRYPTO" | "INDEX" | "PROXY_ETF" | "FX";
   note?: string;
   decimals: number;
 }
@@ -31,5 +31,21 @@ export const MACRO_TICKERS: MacroTicker[] = [
 
 const byAlias = new Map(MACRO_TICKERS.map((t) => [t.alias, t]));
 
-export const macroByAlias = (symbol: string): MacroTicker | null =>
-  byAlias.get(symbol.toUpperCase()) ?? null;
+const ISO = new Set(["USD","EUR","GBP","JPY","TRY","CHF","AUD","NZD","CAD","CNY","MXN","INR","SEK","NOK"]);
+
+export const macroByAlias = (symbol: string): MacroTicker | null => {
+  const s = symbol.toUpperCase();
+  const hit = byAlias.get(s);
+  if (hit) return hit;
+  // Any recognised 6-letter FX pair gets the macro instrument page.
+  if (/^[A-Z]{6}$/.test(s) && ISO.has(s.slice(0, 3)) && ISO.has(s.slice(3))) {
+    return {
+      alias: s,
+      code: `${s}.FOREX`,
+      label: `${s.slice(0, 3)}/${s.slice(3)}`,
+      kind: "FX",
+      decimals: s.endsWith("JPY") || s.slice(3) === "TRY" ? 2 : 4,
+    };
+  }
+  return null;
+};

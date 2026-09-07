@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
-import { getLoginHistory } from "@/lib/server/login-history";
+import { getAccountSignInSummary, getLoginHistory } from "@/lib/server/login-history";
 import { getSessionUser } from "@/lib/server/auth";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,7 @@ export async function GET() {
   }
 
   const { rows, configured } = await getLoginHistory();
+  const summary = await getAccountSignInSummary();
 
   const doc = new PDFDocument({ size: "A4", margin: 50 });
   const chunks: Buffer[] = [];
@@ -33,6 +34,30 @@ export async function GET() {
   doc.text(`Generated: ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`);
   doc.moveDown(1);
   doc.fillColor("#000");
+
+  // What already exists in Supabase's own account record — real, immediate,
+  // predates the event log below. See getAccountSignInSummary() for why this
+  // is limited to "latest" rather than every past sign-in.
+  const fmtFull = (iso: string | null) => (iso ? new Date(iso).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "—");
+  doc.fontSize(12).text("Account Record (Supabase Auth)", { underline: true });
+  doc.moveDown(0.3);
+  doc.fontSize(10).fillColor("#000");
+  doc.text(`Account created (first-ever sign-up):  ${fmtFull(summary?.accountCreatedAt ?? null)}`);
+  doc.text(`Most recent sign-in:                    ${fmtFull(summary?.lastSignInAt ?? null)}`);
+  doc.moveDown(0.5);
+  doc.fontSize(8).fillColor("#888").text(
+    "This is Supabase's own account-level record — it always exists, with no setup needed. It carries only " +
+      "the LATEST sign-in, not every past one: Supabase's full per-event audit log lives in a schema " +
+      "(auth.audit_log_entries) this project does not expose over its API. Enabling it requires the project " +
+      "owner to add \"auth\" under Settings → API → Exposed schemas in the Supabase dashboard, or a direct " +
+      "database connection string — neither is configured here. The detailed, multi-entry log below is what " +
+      "builds a full history going forward.",
+    { width: 495 },
+  );
+  doc.moveDown(1);
+  doc.fillColor("#000").fontSize(12).text("Detailed Event Log (this app, going forward)", { underline: true });
+  doc.moveDown(0.5);
+  doc.fontSize(10);
 
   if (!configured) {
     doc

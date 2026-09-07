@@ -29,11 +29,18 @@ export const isAuthConfigured = (): boolean =>
  * credentials still boots — the callers treat that as "no account system" and
  * fall back to the single-user local store.
  */
+const SESSION_MAX_AGE_S = 60 * 60 * 24 * 100; // 100 days
+
 export async function getSupabaseServer(): Promise<SupabaseClient | null> {
   if (!isAuthConfigured()) return null;
   const store = await cookies();
 
   return createServerClient(url(), anon(), {
+    // 100-day session cookie: this is a private single-user tool, not a
+    // shared-device kiosk — there is no reason a login should expire every
+    // few hours. The proxy still refreshes the token on every request, so a
+    // returning visitor within this window never sees the login page again.
+    cookieOptions: { maxAge: SESSION_MAX_AGE_S, sameSite: "lax" },
     cookies: {
       getAll: () => store.getAll(),
       setAll: (list) => {

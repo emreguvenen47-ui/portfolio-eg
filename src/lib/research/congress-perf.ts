@@ -1,26 +1,30 @@
 import "server-only";
 import { getHistoricalPrices } from "@/lib/providers";
 import { diskCache } from "@/lib/server/disk-cache";
+import { computePositionReturn, firstSellAfter } from "./congress-returns";
 import type { CongressTrade } from "./alt-data";
 
 /**
- * MEMBER PERFORMANCE over the DEEP ledger (12y archive + live feed).
+ * MEMBER PERFORMANCE over the DEEP ledger (14y archive + live feed).
  *
  * Scoring, stated honestly:
  *  - Only BUY filings are scored (sale sizes are ranges; portfolio P&L is
  *    unknowable from disclosures).
- *  - Window: trades from the last ~5 years (the candle budget — 1300 daily
- *    bars per ticker — reaches exactly that far). Older archive rows still
- *    show in the ledger; they are outside the scoring window and say so.
- *  - Metric: excess return vs the S&P 500 over a FIXED 6-month horizon from
- *    the first close on/after the trade date (comparable across years).
- *    Trades younger than 6 months score to-date instead and are flagged.
- *  - Candle budget: the ~250 most-traded tickers; buys outside that set are
- *    listed but unscored. Members need ≥5 scored buys to be ranked at all.
+ *  - Each BUY is matched to the EARLIEST later SELL of the same ticker by the
+ *    same member, if one exists (a full, realized holding-period return); if
+ *    none exists, it is scored HELD from the buy date to today's close. NO
+ *    fixed horizon — a name bought years ago and still held compounds fully,
+ *    which is why this reads much higher than a truncated-window metric.
+ *  - Scoring window: buys from the last SCORING_YEARS (candle-budget bound).
+ *    Older archive rows still show in the disclosure history; they are
+ *    outside the scoring window and are not ranked.
+ *  - Candle budget: the ~250 most-traded tickers across the whole ledger;
+ *    buys outside that set are listed but unscored. Members need
+ *    ≥PERF_MIN_SAMPLE scored buys to be ranked at all.
  *
  * The first computation walks ~250 candle series (minutes, provider-paced),
  * so it runs in the BACKGROUND: callers get {computing:true} until the disk
- * cache fills, then 12h freshness.
+ * cache fills, then a 12h freshness window.
  */
 
 export interface FiledPurchase {
@@ -29,10 +33,13 @@ export interface FiledPurchase {
   transactionDate: string;
   valueLow: number | null;
   valueHigh: number | null;
+  status: "HELD" | "SOLD" | null; // null = unscored (candle budget miss)
+  exitDate: string | null;
+  entryPrice: number | null;
+  exitOrCurrentPrice: number | null;
+  returnPct: number | null; // full holding-period return, entry → exit/now
   excessVsSpyPct: number | null;
-  horizon: "6M" | "TO_DATE" | null;
   sourceUrl: string | null;
-  soldLater: boolean;
 }
 
 export interface MemberPerf {
@@ -50,9 +57,9 @@ export interface MemberPerf {
 }
 
 export const PERF_MIN_SAMPLE = 5;
-const SCORING_YEARS = 5;
+const SCORING_YEARS = 8;
+const CANDLE_BARS = 2200; // ~8.7 trading years
 const TICKER_CAP = 250;
-const HORIZON_DAYS = 126; // ~6 months of sessions
 
 interface PerfCache {
   at: string;
@@ -62,7 +69,7 @@ interface PerfCache {
   windowFrom: string;
 }
 
-const store = diskCache<PerfCache>("congress-member-perf-v2", 12 * 60 * 60_000);
+const store = diskCache<PerfCache>("congress-member-perf-v3", 12 * 60 * 60_000);
 const KEY = "perf";
 const FLIGHT = Symbol.for("pcc.congress.perf.flight");
 const g = globalThis as unknown as Record<symbol, boolean | undefined>;
@@ -74,33 +81,11 @@ const median = (xs: number[]): number | null => {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 };
 
-/** Excess vs SPY from first close on/after txDate over a fixed session count. */
-function excessAt(
-  series: Array<{ date: string; close: number }>,
-  spy: Array<{ date: string; close: number }>,
-  txDate: string,
-): { excess: number; horizon: "6M" | "TO_DATE" } | null {
-  const i0 = series.findIndex((c) => c.date >= txDate);
-  if (i0 < 0 || series[i0]!.close <= 0) return null;
-  const iH = Math.min(i0 + HORIZON_DAYS, series.length - 1);
-  if (iH <= i0) return null;
-  const ret = series[iH]!.close / series[i0]!.close - 1;
-  const s0 = spy.findIndex((c) => c.date >= series[i0]!.date);
-  if (s0 < 0) return null;
-  const sH = Math.min(s0 + (iH - i0), spy.length - 1);
-  if (sH <= s0 || spy[s0]!.close <= 0) return null;
-  const spyRet = spy[sH]!.close / spy[s0]!.close - 1;
-  return {
-    excess: (ret - spyRet) * 100,
-    horizon: iH - i0 >= HORIZON_DAYS ? "6M" : "TO_DATE",
-  };
-}
-
 async function compute(rows: CongressTrade[], ledgerStamp: string): Promise<void> {
   const windowFrom = new Date(Date.now() - SCORING_YEARS * 365.25 * 86_400_000).toISOString().slice(0, 10);
   const buys = rows.filter((r) => r.side === "BUY" && r.ticker && r.transactionDate >= windowFrom);
 
-  // Candle budget goes to the most-traded tickers.
+  // Candle budget goes to the most-traded tickers across the whole ledger.
   const freq = new Map<string, number>();
   for (const b of buys) freq.set(b.ticker, (freq.get(b.ticker) ?? 0) + 1);
   const tickers = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, TICKER_CAP).map(([t]) => t);
@@ -109,10 +94,10 @@ async function compute(rows: CongressTrade[], ledgerStamp: string): Promise<void
   const fetchSeries = async (sym: string) => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const h = await getHistoricalPrices(sym, 1400);
+        const h = await getHistoricalPrices(sym, CANDLE_BARS);
         if (h.candles.length >= 60) return h.candles;
       } catch {
-        /* retry once after a beat — transient fetch failures must not zero the run */
+        /* retry once — a transient fetch failure must not zero the run */
       }
       await new Promise((r) => setTimeout(r, 800));
     }
@@ -129,13 +114,14 @@ async function compute(rows: CongressTrade[], ledgerStamp: string): Promise<void
   }
   console.log(`[congress-perf] tickers ${tickers.length}, series ok ${seriesByTicker.size}, failed ${fetchFails}, spy bars ${spy.length}`);
 
-  const soldByMember = new Map<string, Set<string>>();
+  // Sell dates per (politician, ticker), for matching each buy to its exit.
+  const sellsByKey = new Map<string, string[]>();
   for (const r of rows) {
-    if (r.side === "SELL") {
-      const set = soldByMember.get(r.politician) ?? new Set<string>();
-      set.add(r.ticker);
-      soldByMember.set(r.politician, set);
-    }
+    if (r.side !== "SELL") continue;
+    const k = `${r.politician}|${r.ticker}`;
+    const arr = sellsByKey.get(k) ?? [];
+    arr.push(r.transactionDate);
+    sellsByKey.set(k, arr);
   }
 
   const byMember = new Map<string, CongressTrade[]>();
@@ -151,17 +137,25 @@ async function compute(rows: CongressTrade[], ledgerStamp: string): Promise<void
       .sort((a, b) => b.transactionDate.localeCompare(a.transactionDate))
       .map((t) => {
         const series = tickerSet.has(t.ticker) ? seriesByTicker.get(t.ticker) : undefined;
-        const ex = series && spy.length ? excessAt(series, spy, t.transactionDate) : null;
+        let result: ReturnType<typeof computePositionReturn> = null;
+        if (series && spy.length) {
+          const sellDates = sellsByKey.get(`${politician}|${t.ticker}`) ?? [];
+          const exit = firstSellAfter(sellDates, t.transactionDate);
+          result = computePositionReturn(t.transactionDate, series, spy, exit);
+        }
         return {
           ticker: t.ticker,
           company: t.company ?? null,
           transactionDate: t.transactionDate,
           valueLow: t.valueLow,
           valueHigh: t.valueHigh,
-          excessVsSpyPct: ex ? Number(ex.excess.toFixed(1)) : null,
-          horizon: ex?.horizon ?? null,
+          status: result?.status ?? null,
+          exitDate: result?.exitDate ?? null,
+          entryPrice: result?.entryPrice ?? null,
+          exitOrCurrentPrice: result ? (result.exitPrice ?? result.currentPrice) : null,
+          returnPct: result?.returnPct ?? null,
+          excessVsSpyPct: result?.excessVsSpyPct ?? null,
           sourceUrl: t.sourceUrl ?? null,
-          soldLater: soldByMember.get(politician)?.has(t.ticker) ?? false,
         };
       });
     const scoredList = purchases.filter((p) => p.excessVsSpyPct !== null);
@@ -178,7 +172,7 @@ async function compute(rows: CongressTrade[], ledgerStamp: string): Promise<void
       avgExcessPct: excess.length ? Number((excess.reduce((a, b) => a + b, 0) / excess.length).toFixed(1)) : null,
       best: byExcess[0] ? { ticker: byExcess[0].ticker, excessPct: byExcess[0].excessVsSpyPct! } : null,
       worst: byExcess.at(-1) ? { ticker: byExcess.at(-1)!.ticker, excessPct: byExcess.at(-1)!.excessVsSpyPct! } : null,
-      purchases: purchases.slice(0, 40),
+      purchases: purchases.slice(0, 60),
     });
   }
   members.sort((a, b) => (b.medianExcessPct ?? -999) - (a.medianExcessPct ?? -999));

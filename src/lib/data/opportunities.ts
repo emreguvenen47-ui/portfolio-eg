@@ -6,6 +6,7 @@ import { createEodhdProvider } from "@/lib/providers/eodhd";
 import { buildTechnicalDecision } from "@/lib/engines/technical-v3";
 import { computeValuation } from "@/lib/engines/valuation";
 import { computeExpectations } from "@/lib/engines/expectations";
+import { refreshSectorAnchors } from "@/lib/engines/sector-anchors";
 
 /**
  * Precomputed Opportunity/Screener Universe (spec §38–43, v3).
@@ -158,12 +159,24 @@ export function upsertOpportunityRows(newRows: OpportunitySnapshot[]): number {
   rowsStore.set(ROWS_KEY, merged);
   rowsStore.flushNow();
   void persistUniverseToSupabase(merged);
+  // Every fresh write re-derives the valuation engine's sector anchors from
+  // what the market is actually paying right now — see sector-anchors.ts.
+  refreshSectorAnchors(merged);
   return merged.length;
 }
+
+let anchorsBootstrapped = false;
 
 export function getUniverseRows(): OpportunitySnapshot[] {
   const rows = rowsStore.get(ROWS_KEY) ?? [];
   if (rows.length === 0) void hydrateUniverseFromSupabase();
+  // One-time cold-boot bootstrap: warm the valuation engine's live sector
+  // anchors from whatever is already on disk, without waiting for the next
+  // sweep/priority-refresh write.
+  if (!anchorsBootstrapped && rows.length > 0) {
+    anchorsBootstrapped = true;
+    refreshSectorAnchors(rows);
+  }
   return rows;
 }
 
@@ -196,6 +209,7 @@ async function hydrateUniverseFromSupabase(): Promise<void> {
     if (rows.length && (rowsStore.get(ROWS_KEY) ?? []).length === 0) {
       rowsStore.set(ROWS_KEY, rows);
       rowsStore.flushNow();
+      refreshSectorAnchors(rows);
       console.log(`[universe] hydrated ${rows.length} rows from Supabase`);
     }
   } catch {

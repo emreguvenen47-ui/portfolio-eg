@@ -31,7 +31,11 @@ export async function getClassifiedNews(symbol: string, limit = 25, companyName?
   const hit = cache.get(k);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
   try {
-    const raw = await eodhdGet<RawNews[]>(`/news`, { s: code, limit: String(limit) });
+    // Shorter timeout than the 20s default: observed live at 15-20s for
+    // heavily-covered tickers (NVDA), and a caller-side race already treats
+    // anything past a few seconds as "no news yet" — no point holding the
+    // connection open for the full default window once that race has fired.
+    const raw = await eodhdGet<RawNews[]>(`/news`, { s: code, limit: String(limit) }, 8_000);
     // Relevance: the story must actually be ABOUT this company — the ticker
     // or a distinctive name token appears in the title or lead paragraph.
     const nameToken = (companyName ?? "").split(/\s+/)[0]?.toLowerCase() ?? "";

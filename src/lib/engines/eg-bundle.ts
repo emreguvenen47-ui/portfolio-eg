@@ -38,6 +38,18 @@ export async function buildEgBundle(
   price: number | null,
   candles: Candle[],
 ): Promise<EgBundle | null> {
+  // News and fundamentals run CONCURRENTLY, not sequentially: EODHD's /news
+  // endpoint has been observed at 8-20s for heavily-covered tickers (NVDA
+  // live), and awaiting it only after fundamentals resolve pushed the whole
+  // bundle past the page's 12s budget, silently nulling out financials too.
+  // Started before the company name is known, so relevance here is
+  // ticker-only (still correct — the name token is an OR-ed extra match).
+  const NEWS_DEADLINE_MS = 9_000;
+  const newsPromise = Promise.race([
+    getClassifiedNews(symbol, 25).catch(() => []),
+    new Promise<ClassifiedNews[]>((resolve) => setTimeout(() => resolve([]), NEWS_DEADLINE_MS)),
+  ]);
+
   const snapshot = await getCompanySnapshot(symbol).catch(() => null);
   if (!snapshot) return null;
 
@@ -55,7 +67,7 @@ export async function buildEgBundle(
   });
   const story = buildFinancialStory(snapshot);
   const financialsView = buildFinancialsView(snapshot);
-  const news = await getClassifiedNews(symbol, 25, snapshot.identity.name).catch(() => []);
+  const news = await newsPromise;
   const thesis = buildThesis({ snapshot, decision, valuation, expectations, story, technicalDecision, news });
   const plan = buildCompanyPlan(snapshot, news, story);
 

@@ -93,7 +93,10 @@ export default async function MemberProfilePage(props: { params: Promise<{ polit
                 <th className="tl">Ticker</th>
                 <th className="tl">Company</th>
                 <th className="tl">Status</th>
-                <th className="tl">Last action</th>
+                <th className="tl">Entry</th>
+                <th className="tl">{"Exit / now"}</th>
+                <th>Return</th>
+                <th>vs SPY</th>
                 <th>Buys</th>
                 <th>Sells</th>
                 <th className="tl">Filing</th>
@@ -105,13 +108,23 @@ export default async function MemberProfilePage(props: { params: Promise<{ polit
                   <td className="tl font-semibold">
                     <Link href={`/ticker/${h.ticker}`} className="hover:text-[var(--amber)]">{h.ticker}</Link>
                   </td>
-                  <td className="tl max-w-[200px] truncate text-[10px] text-[var(--ink-3)]" title={h.company ?? ""}>{h.company ?? "—"}</td>
+                  <td className="tl max-w-[180px] truncate text-[10px] text-[var(--ink-3)]" title={h.company ?? ""}>{h.company ?? "—"}</td>
                   <td className="tl">
-                    <Chip tone={h.status === "LIKELY HELD" ? "pos" : "neutral"}>{h.status}</Chip>
+                    <Chip tone={h.status === "LIKELY HELD" ? "pos" : h.status === "UNPRICED" ? "neutral" : "neutral"}>{h.status}</Chip>
                   </td>
-                  <td className="tl tabular-nums">
-                    <span className={h.lastAction === "BUY" ? "text-emerald-400" : "text-rose-400"}>{h.lastAction}</span>{" "}
-                    {h.lastActionDate}
+                  <td className="tl tabular-nums text-[10px]">
+                    {h.entryPrice !== null ? `$${h.entryPrice.toFixed(2)}` : "N/A"}
+                    {h.entryDate ? <span className="ml-1 text-[var(--ink-3)]">{h.entryDate}</span> : null}
+                  </td>
+                  <td className="tl tabular-nums text-[10px]">
+                    {h.exitOrCurrentPrice !== null ? `$${h.exitOrCurrentPrice.toFixed(2)}` : "N/A"}
+                    {h.exitDate ? <span className="ml-1 text-[var(--ink-3)]">{h.exitDate}</span> : h.status === "LIKELY HELD" ? <span className="ml-1 text-[var(--ink-3)]">today</span> : null}
+                  </td>
+                  <td className={`tabular-nums font-semibold ${(h.returnPct ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {h.returnPct !== null ? `${h.returnPct > 0 ? "+" : ""}${h.returnPct}%` : "N/A"}
+                  </td>
+                  <td className={`tabular-nums ${(h.excessVsSpyPct ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {h.excessVsSpyPct !== null ? `${h.excessVsSpyPct > 0 ? "+" : ""}${h.excessVsSpyPct}%` : "—"}
                   </td>
                   <td className="tabular-nums text-emerald-400">{h.totalBuys}</td>
                   <td className="tabular-nums text-rose-400">{h.totalSells}</td>
@@ -123,6 +136,12 @@ export default async function MemberProfilePage(props: { params: Promise<{ polit
             </tbody>
           </table>
         )}
+        <div className="border-t border-[var(--line)] px-3 py-1.5 text-[9.5px] leading-snug text-[var(--ink-3)]">
+          Return is the FULL holding-period move: entry price on/after the buy date to the price on/after the
+          earliest later SELL filing (realized) or to today&apos;s close if no sale was filed (unrealized, still
+          open). &quot;vs SPY&quot; is the identical window on the S&amp;P 500. UNPRICED = price history unavailable
+          for that ticker.
+        </div>
       </Panel>
 
       {/* Full chronological trade history */}

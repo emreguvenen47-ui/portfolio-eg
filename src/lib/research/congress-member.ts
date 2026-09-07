@@ -1,25 +1,34 @@
 import "server-only";
+import { getHistoricalPrices } from "@/lib/providers";
+import { diskCache } from "@/lib/server/disk-cache";
 import { getAllCongressRows } from "./congress-archive";
 import { getMemberPerformance, type MemberPerf } from "./congress-perf";
+import { computePositionReturn, firstSellAfter } from "./congress-returns";
 import { withLag, type CongressRow } from "./congress";
 import type { CongressTrade } from "./alt-data";
 
 /**
  * MEMBER PROFILE — one politician's full disclosure history, "what office
- * they hold" stated plainly, and a deterministic read of what they likely
- * still hold: the LAST filed action per ticker (a later SELL after a BUY
- * means likely exited; a BUY with nothing after it means likely still held).
- * This is a disclosure trail, not a verified portfolio — every row says so.
+ * they hold" stated plainly, and a deterministic REAL-PRICE read of what
+ * they likely still hold and what it has actually returned: each BUY is
+ * matched to the earliest later SELL of the same ticker (a realized
+ * holding-period return) or, absent one, priced from the buy date to today
+ * (an unrealized, still-held return). This is a disclosure trail, not a
+ * verified portfolio — every row says so.
  */
 
 export interface HoldingEstimate {
   ticker: string;
   company: string | null;
-  lastAction: "BUY" | "SELL";
-  lastActionDate: string;
+  status: "LIKELY HELD" | "LIKELY EXITED" | "UNPRICED";
+  entryDate: string | null;
+  entryPrice: number | null;
+  exitDate: string | null;
+  exitOrCurrentPrice: number | null;
+  returnPct: number | null;
+  excessVsSpyPct: number | null;
   totalBuys: number;
   totalSells: number;
-  status: "LIKELY HELD" | "LIKELY EXITED";
   sourceUrl: string | null;
 }
 
@@ -30,7 +39,7 @@ export interface MemberProfile {
   office: string; // "Senator for California" / "Representative for NJ"
   rows: CongressRow[]; // full history, newest first
   perf: MemberPerf | null;
-  holdings: HoldingEstimate[]; // newest-active first
+  holdings: HoldingEstimate[]; // best-performing-first
   firstFiling: string | null;
   lastFiling: string | null;
 }
@@ -54,6 +63,82 @@ function officeOf(chamber: string, state: string | null): string {
   return stateName ? `U.S. Representative for ${stateName}` : "U.S. Representative";
 }
 
+const MAX_TICKERS = 80;
+const holdingsCache = diskCache<HoldingEstimate[]>("congress-member-holdings", 12 * 60 * 60_000);
+
+/** Real per-ticker returns for one member's own bought tickers (on demand). */
+async function buildHoldings(politician: string, rows: CongressRow[]): Promise<HoldingEstimate[]> {
+  const cacheKey = `${politician}:${rows.length}`;
+  const cached = holdingsCache.get(cacheKey);
+  if (cached && !holdingsCache.isStale(cacheKey)) return cached;
+
+  const byTicker = new Map<string, CongressRow[]>();
+  for (const r of rows) {
+    const g = byTicker.get(r.ticker) ?? [];
+    g.push(r);
+    byTicker.set(r.ticker, g);
+  }
+  // Prioritize tickers with the most recent activity — most relevant first.
+  const tickers = [...byTicker.entries()]
+    .sort((a, b) => b[1][0]!.transactionDate.localeCompare(a[1][0]!.transactionDate))
+    .slice(0, MAX_TICKERS);
+
+  const spy = await getHistoricalPrices("SPY", 2200).catch(() => ({ candles: [] }));
+  const out: HoldingEstimate[] = [];
+  for (const [ticker, txs] of tickers) {
+    const buysSorted = txs.filter((t) => t.side === "BUY").sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
+    const sells = txs.filter((t) => t.side === "SELL").map((t) => t.transactionDate);
+    const lastBuy = buysSorted.at(-1) ?? null;
+    if (!lastBuy) {
+      // Ticker with only SELL filings (a prior holding never disclosed as a buy).
+      out.push({
+        ticker,
+        company: txs[0]!.company ?? null,
+        status: "LIKELY EXITED",
+        entryDate: null,
+        entryPrice: null,
+        exitDate: txs.find((t) => t.side === "SELL")?.transactionDate ?? null,
+        exitOrCurrentPrice: null,
+        returnPct: null,
+        excessVsSpyPct: null,
+        totalBuys: 0,
+        totalSells: sells.length,
+        sourceUrl: txs.find((t) => t.side === "SELL")?.sourceUrl ?? null,
+      });
+      continue;
+    }
+    const h = await getHistoricalPrices(ticker, 2200).catch(() => ({ candles: [] }));
+    const exit = firstSellAfter(sells, lastBuy.transactionDate);
+    const result = h.candles.length >= 60 && spy.candles.length
+      ? computePositionReturn(lastBuy.transactionDate, h.candles, spy.candles, exit)
+      : null;
+    out.push({
+      ticker,
+      company: lastBuy.company ?? null,
+      status: result ? (result.status === "HELD" ? "LIKELY HELD" : "LIKELY EXITED") : "UNPRICED",
+      entryDate: result?.entryDate ?? lastBuy.transactionDate,
+      entryPrice: result?.entryPrice ?? null,
+      exitDate: result?.exitDate ?? null,
+      exitOrCurrentPrice: result ? (result.exitPrice ?? result.currentPrice) : null,
+      returnPct: result?.returnPct ?? null,
+      excessVsSpyPct: result?.excessVsSpyPct ?? null,
+      totalBuys: buysSorted.length,
+      totalSells: sells.length,
+      sourceUrl: (exit ? txs.find((t) => t.side === "SELL" && t.transactionDate === exit)?.sourceUrl : lastBuy.sourceUrl) ?? null,
+    });
+    await new Promise((r) => setTimeout(r, 90)); // provider-friendly pacing
+  }
+
+  out.sort((a, b) => {
+    if (a.status === "UNPRICED") return 1;
+    if (b.status === "UNPRICED") return -1;
+    return (b.returnPct ?? -999) - (a.returnPct ?? -999);
+  });
+  holdingsCache.set(cacheKey, out);
+  holdingsCache.flushNow();
+  return out;
+}
+
 export async function getMemberProfile(politicianExact: string): Promise<MemberProfile | null> {
   const all = await getAllCongressRows();
   const target = politicianExact.trim().toLowerCase();
@@ -64,29 +149,7 @@ export async function getMemberProfile(politicianExact: string): Promise<MemberP
   const chamber = (rows[0]!.chamber as "House" | "Senate") ?? "House";
   const state = rows.find((r) => r.state)?.state ?? null;
 
-  // Deterministic holdings estimate: last filed action per ticker.
-  const byTicker = new Map<string, CongressRow[]>();
-  for (const r of rows) {
-    const g = byTicker.get(r.ticker) ?? [];
-    g.push(r);
-    byTicker.set(r.ticker, g);
-  }
-  const holdings: HoldingEstimate[] = [...byTicker.entries()]
-    .map(([ticker, txs]) => {
-      const sorted = [...txs].sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
-      const last = sorted[sorted.length - 1]!;
-      return {
-        ticker,
-        company: txs.find((t) => t.company)?.company ?? null,
-        lastAction: last.side,
-        lastActionDate: last.transactionDate,
-        totalBuys: txs.filter((t) => t.side === "BUY").length,
-        totalSells: txs.filter((t) => t.side === "SELL").length,
-        status: (last.side === "BUY" ? "LIKELY HELD" : "LIKELY EXITED") as HoldingEstimate["status"],
-        sourceUrl: last.sourceUrl ?? null,
-      };
-    })
-    .sort((a, b) => b.lastActionDate.localeCompare(a.lastActionDate));
+  const holdings = await buildHoldings(rows[0]!.politician, rows);
 
   // Reuse the deep performance ranking (already computed against the full ledger).
   const perfResult = getMemberPerformance(all);
@@ -103,4 +166,28 @@ export async function getMemberProfile(politicianExact: string): Promise<MemberP
     firstFiling: rows.at(-1)?.transactionDate ?? null,
     lastFiling: rows[0]?.transactionDate ?? null,
   };
+}
+
+/** All politicians in the ledger, for the directory/search list. */
+export async function getAllMembers(): Promise<
+  Array<{ politician: string; chamber: string; state: string | null; filings: number; buys: number; sells: number; lastFiling: string }>
+> {
+  const all = await getAllCongressRows();
+  const byName = new Map<string, CongressTrade[]>();
+  for (const r of all) {
+    const g = byName.get(r.politician) ?? [];
+    g.push(r);
+    byName.set(r.politician, g);
+  }
+  return [...byName.entries()]
+    .map(([politician, rows]) => ({
+      politician,
+      chamber: rows[0]!.chamber,
+      state: rows.find((r) => r.state)?.state ?? null,
+      filings: rows.length,
+      buys: rows.filter((r) => r.side === "BUY").length,
+      sells: rows.filter((r) => r.side === "SELL").length,
+      lastFiling: rows.reduce((max, r) => (r.transactionDate > max ? r.transactionDate : max), rows[0]!.transactionDate),
+    }))
+    .sort((a, b) => b.filings - a.filings);
 }

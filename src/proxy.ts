@@ -82,6 +82,9 @@ export async function proxy(req: NextRequest) {
   if (!url || !anon) return res;
 
   const supabase = createServerClient(url, anon, {
+    // Match auth.ts: a 100-day session so a private single-user tool doesn't
+    // re-prompt for a password every few hours.
+    cookieOptions: { maxAge: 60 * 60 * 24 * 100, sameSite: "lax" },
     cookies: {
       getAll: () => req.cookies.getAll(),
       setAll: (list) => {

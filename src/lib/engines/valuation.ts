@@ -1,5 +1,6 @@
 import type { CompanySnapshot } from "@/lib/data/normalize/company";
 import { usableForValuation } from "@/lib/data/validation/company";
+import { sectorEvAnchor, sectorPeAnchor, STATIC_PE_ANCHOR } from "./sector-anchors";
 
 /**
  * Valuation Engine V2 (master spec §11–14).
@@ -40,19 +41,7 @@ export interface ValuationResult {
  * forward view. Historical per-company medians can replace these once the
  * snapshot store has enough depth.
  */
-export const SECTOR_PE: Record<CompanySnapshot["identity"]["companyType"], number> = {
-  BANK: 12,
-  INSURANCE: 12,
-  REIT: 16,
-  SEMICONDUCTOR: 22,
-  SAAS: 28,
-  ENERGY: 12,
-  UTILITY: 17,
-  CONSUMER: 20,
-  INDUSTRIAL: 18,
-  BIOTECH: 20,
-  GENERAL: 18,
-};
+export const SECTOR_PE = STATIC_PE_ANCHOR;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -98,7 +87,7 @@ export function computeValuation(snapshot: CompanySnapshot | null, price: number
 
   const shares = s.sharesOutstanding;
   const epsFwd = s.epsEstimateNextYear ?? s.epsEstimateCurrentYear;
-  const anchorPe = SECTOR_PE[t];
+  const anchorPe = sectorPeAnchor(t);
 
   // ---- Model 1: forward P/E on street EPS ---------------------------------
   if (epsFwd !== null && epsFwd > 0) {
@@ -145,7 +134,7 @@ export function computeValuation(snapshot: CompanySnapshot | null, price: number
     s.evToEbitda !== null && s.evToEbitda > 0 &&
     s.enterpriseValue !== null && shares !== null && shares > 0 && s.netDebt !== null
   ) {
-    const sectorEv = t === "SAAS" ? 22 : t === "SEMICONDUCTOR" ? 16 : t === "ENERGY" ? 6 : t === "REIT" ? 18 : 12;
+    const sectorEv = sectorEvAnchor(t);
     const mult = clamp(0.5 * clamp(s.evToEbitda, 3, 40) + 0.5 * sectorEv, 4, 35);
     const impliedEquity = s.ebitdaTtm * mult - s.netDebt;
     if (impliedEquity > 0) {

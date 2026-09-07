@@ -4,6 +4,8 @@ import { CONGRESS_BLOCKER, MIN_SAMPLE, dedupe, summarise, withLag } from "@/lib/
 import { getAllCongressRows } from "@/lib/research/congress-archive";
 import { allHealth } from "@/lib/research/congress-health";
 import { PERF_MIN_SAMPLE, getMemberPerformance } from "@/lib/research/congress-perf";
+import { getAllMembers } from "@/lib/research/congress-member";
+import { MemberDirectory } from "@/components/congress/member-directory";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Congress Trading" };
@@ -38,6 +40,7 @@ export default async function CongressPage(props: {
   const perfResult = rows.length ? getMemberPerformance(raw) : { members: [], computing: false, computedAt: null, scoredTrades: 0, windowFrom: null };
   const ranked = perfResult.members.filter((m) => m.scored >= PERF_MIN_SAMPLE);
   const txDates = rows.map((r) => r.transactionDate).filter(Boolean).sort();
+  const allMembers = await getAllMembers().catch(() => []);
 
   return (
     <div className="flex flex-col gap-3">
@@ -136,7 +139,7 @@ export default async function CongressPage(props: {
 
           <Panel
             title="Best Performing Members"
-            subtitle={`disclosed BUYS scored vs the S&P 500 over a fixed 6-month horizon from each trade date · scoring window ${perfResult.windowFrom ?? "last 5y"} → today (candle budget) · ledger reaches back to ${txDates[0] ?? "?"} · ${perfResult.scoredTrades} buys scored · members need ≥${PERF_MIN_SAMPLE} scored buys${perfResult.computing ? " · RECOMPUTING in background — refresh in a couple of minutes" : perfResult.computedAt ? ` · computed ${perfResult.computedAt.slice(0, 16).replace("T", " ")} UTC` : ""}`}
+            subtitle={`disclosed BUYS scored on their FULL holding period — realized to the earliest later SELL if one exists, else unrealized to today's close, vs the S&P 500 over the identical window · buys since ${perfResult.windowFrom ?? "last 8y"} (candle budget) · ledger reaches back to ${txDates[0] ?? "?"} · ${perfResult.scoredTrades} buys scored · members need ≥${PERF_MIN_SAMPLE} scored buys${perfResult.computing ? " · RECOMPUTING in background — refresh in a couple of minutes" : perfResult.computedAt ? ` · computed ${perfResult.computedAt.slice(0, 16).replace("T", " ")} UTC` : ""}`}
             bodyClassName="p-0"
           >
             {ranked.length === 0 ? (
@@ -168,13 +171,14 @@ export default async function CongressPage(props: {
                         <a
                           key={`${p.ticker}-${p.transactionDate}`}
                           href={`/ticker/${p.ticker}`}
-                          title={`${p.company ?? p.ticker} · bought ${p.transactionDate}${p.valueLow !== null ? ` · $${p.valueLow.toLocaleString()}–$${(p.valueHigh ?? p.valueLow).toLocaleString()}` : ""}${p.soldLater ? " · a later SELL filing exists" : ""}`}
-                          className={`rounded border px-1.5 py-0.5 text-[9.5px] tabular-nums ${p.soldLater ? "border-[var(--line)] text-[var(--ink-3)] line-through" : "border-[var(--line)] hover:border-[var(--amber)]"}`}
+                          title={`${p.company ?? p.ticker} · bought ${p.transactionDate}${p.valueLow !== null ? ` · $${p.valueLow.toLocaleString()}–$${(p.valueHigh ?? p.valueLow).toLocaleString()}` : ""}${p.status === "SOLD" ? ` · sold ${p.exitDate}, return ${p.returnPct}%` : p.status === "HELD" ? ` · still held, return ${p.returnPct}% to date` : ""}`}
+                          className={`rounded border px-1.5 py-0.5 text-[9.5px] tabular-nums ${p.status === "SOLD" ? "border-[var(--line)] text-[var(--ink-3)]" : "border-[var(--line)] hover:border-[var(--amber)]"}`}
                         >
                           <span className="font-semibold">{p.ticker}</span>
+                          {p.status === "HELD" && <span className="ml-1 text-[8px] text-emerald-400">●</span>}
                           {p.excessVsSpyPct !== null && (
                             <span className={`ml-1 ${p.excessVsSpyPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                              {p.excessVsSpyPct > 0 ? "+" : ""}{p.excessVsSpyPct}%{p.horizon === "TO_DATE" ? "*" : ""}
+                              {p.excessVsSpyPct > 0 ? "+" : ""}{p.excessVsSpyPct}%
                             </span>
                           )}
                         </a>
@@ -184,6 +188,14 @@ export default async function CongressPage(props: {
                 ))}
               </div>
             )}
+          </Panel>
+
+          <Panel
+            title="Full Member Directory"
+            subtitle="every politician with ≥1 disclosed trade — search by name or state to find anyone, not just the top performers"
+            bodyClassName="p-0"
+          >
+            <MemberDirectory members={allMembers} totalSeats={535} />
           </Panel>
 
           <Panel

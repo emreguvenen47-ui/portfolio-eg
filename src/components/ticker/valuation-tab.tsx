@@ -1,5 +1,5 @@
 import { Chip, Panel } from "@/components/shell/ui";
-import { SECTOR_PE } from "@/lib/engines/valuation";
+import { anchorMeta } from "@/lib/engines/sector-anchors";
 import type { EgBundle } from "@/lib/engines/eg-bundle";
 
 /**
@@ -181,7 +181,8 @@ export function ValuationTab({ eg }: { eg: EgBundle }) {
                 const inputsFor = (model: string): string => {
                   switch (model) {
                     case "FWD_PE":
-                      return `fwd EPS $${a.fwdEps ?? "?"} × blended multiple ${a.fwdMultiple ?? "?"}× (60% own fwd P/E + 40% sector anchor ${SECTOR_PE[eg.snapshot.identity.companyType]}×, clamped 5–45)`;
+                      const am = anchorMeta(eg.snapshot.identity.companyType);
+                      return `fwd EPS $${a.fwdEps ?? "?"} × blended multiple ${a.fwdMultiple ?? "?"}× (60% own fwd P/E + 40% sector anchor ${am.peAnchor}×${am.live ? ` — LIVE median of ${am.sampleCount} peers` : " — static prior, not enough live peers yet"}, clamped 5–45)`;
                     case "FCF_YIELD":
                       return `FCF/share $${a.fcfPerShare ?? "?"} ÷ required yield ${typeof a.requiredFcfYield === "number" ? (a.requiredFcfYield * 100).toFixed(1) : "?"}%`;
                     case "EV_EBITDA":
@@ -271,7 +272,7 @@ export function ValuationTab({ eg }: { eg: EgBundle }) {
       })()}
 
       {/* ------------------------------------------- multiples vs sector anchor */}
-      <Panel title="Where the Multiples Sit" subtitle="company vs the sector anchor the models use — every input on the table" bodyClassName="p-0">
+      <Panel title="Where the Multiples Sit" subtitle={(() => { const am = anchorMeta(eg.snapshot.identity.companyType); return `company vs the sector anchor the models use — ${am.live ? `LIVE median of ${am.sampleCount} peers` : "static prior (not enough live peers yet)"}`; })()} bodyClassName="p-0">
         <table className="grid-table">
           <thead>
             <tr>
@@ -285,7 +286,8 @@ export function ValuationTab({ eg }: { eg: EgBundle }) {
           <tbody>
             {(() => {
               const sn = eg.snapshot;
-              const anchor = SECTOR_PE[sn.identity.companyType];
+              const am = anchorMeta(sn.identity.companyType);
+              const anchor = am.peAnchor;
               const rows: Array<[string, number | null, number | null, string]> = [
                 ["P/E (TTM)", sn.peTtm, anchor, "trailing reported EPS"],
                 ["Forward P/E", sn.forwardPe, anchor, "street next-FY EPS"],

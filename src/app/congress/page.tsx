@@ -3,6 +3,7 @@ import { Chip, Note, Panel } from "@/components/shell/ui";
 import { CONGRESS_BLOCKER, MIN_SAMPLE, dedupe, summarise, withLag } from "@/lib/research/congress";
 import { getCongressTrades } from "@/lib/research/alt-data";
 import { allHealth } from "@/lib/research/congress-health";
+import { PERF_MIN_SAMPLE, buildMemberPerformance } from "@/lib/research/congress-perf";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Congress Trading" };
@@ -34,6 +35,9 @@ export default async function CongressPage(props: {
     summarise(rows, 90, "90D"),
     summarise(rows, 365, "1Y"),
   ];
+  const perf = rows.length ? await buildMemberPerformance(raw).catch(() => []) : [];
+  const ranked = perf.filter((m) => m.scored >= PERF_MIN_SAMPLE);
+  const txDates = rows.map((r) => r.transactionDate).filter(Boolean).sort();
 
   return (
     <div className="flex flex-col gap-3">
@@ -128,6 +132,58 @@ export default async function CongressPage(props: {
                 ))}
               </tbody>
             </table>
+          </Panel>
+
+          <Panel
+            title="Best Performing Members"
+            subtitle={`disclosed BUYS scored from the trade date vs the S&P 500 over the same window · members need ≥${PERF_MIN_SAMPLE} scored buys · transactions in ledger reach back to ${txDates[0] ?? "?"} (disclosures carry a legal lag up to 45 days, so the tape starts ~6 weeks deep and grows hourly)`}
+            bodyClassName="p-0"
+          >
+            {ranked.length === 0 ? (
+              <div className="px-3 py-3 text-[10.5px] leading-snug text-[var(--ink-3)]">
+                No member has {PERF_MIN_SAMPLE}+ scored buys in the ledger yet ({perf.length} members,
+                {" "}{rows.length} filings so far). The ledger accumulates every hour — rankings appear
+                automatically as members cross the sample bar. Nothing is ranked on thin evidence.
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--line)]">
+                {ranked.slice(0, 10).map((m, i) => (
+                  <div key={m.politician} className="px-3 py-2">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-[10px] tabular-nums text-[var(--ink-3)]">#{i + 1}</span>
+                      <span className="text-[12px] font-semibold">{m.politician}</span>
+                      <span className="text-[9.5px] text-[var(--ink-3)]">{m.chamber}{m.state ? ` · ${m.state}` : ""}</span>
+                      <span className={`tabular-nums text-[11px] font-semibold ${(m.medianExcessPct ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {m.medianExcessPct !== null ? `${m.medianExcessPct > 0 ? "+" : ""}${m.medianExcessPct}% median vs SPY` : "—"}
+                      </span>
+                      <span className="text-[9.5px] tabular-nums text-[var(--ink-3)]">
+                        hit rate {m.hitRateVsSpy !== null ? `${(m.hitRateVsSpy * 100).toFixed(0)}%` : "—"} · {m.scored} scored buys
+                        {m.best ? ` · best ${m.best.ticker} ${m.best.excessPct > 0 ? "+" : ""}${m.best.excessPct}%` : ""}
+                        {m.worst ? ` · worst ${m.worst.ticker} ${m.worst.excessPct}%` : ""}
+                      </span>
+                    </div>
+                    {/* Filed purchases — the disclosure trail, not a portfolio statement */}
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {m.purchases.slice(0, 8).map((p) => (
+                        <a
+                          key={`${p.ticker}-${p.transactionDate}`}
+                          href={`/ticker/${p.ticker}`}
+                          title={`${p.company ?? p.ticker} · bought ${p.transactionDate}${p.valueLow !== null ? ` · $${p.valueLow.toLocaleString()}–$${(p.valueHigh ?? p.valueLow).toLocaleString()}` : ""}${p.soldLater ? " · a later SELL filing exists" : ""}`}
+                          className={`rounded border px-1.5 py-0.5 text-[9.5px] tabular-nums ${p.soldLater ? "border-[var(--line)] text-[var(--ink-3)] line-through" : "border-[var(--line)] hover:border-[var(--amber)]"}`}
+                        >
+                          <span className="font-semibold">{p.ticker}</span>
+                          {p.excessVsSpyPct !== null && (
+                            <span className={`ml-1 ${p.excessVsSpyPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                              {p.excessVsSpyPct > 0 ? "+" : ""}{p.excessVsSpyPct}%
+                            </span>
+                          )}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </Panel>
 
           <Panel

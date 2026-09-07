@@ -97,6 +97,10 @@ export async function proxy(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Opt-in single-user mode: EG_DISABLE_AUTH=1 removes every login gate.
+  // Off by default — on a public URL this exposes the whole portfolio.
+  if (process.env.EG_DISABLE_AUTH === "1") return NextResponse.next();
+
   const path = req.nextUrl.pathname;
 
   if (!user && isPrivateApi(path)) {

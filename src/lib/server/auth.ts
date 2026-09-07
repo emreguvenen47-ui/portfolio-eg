@@ -19,7 +19,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 const url = () => process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const anon = () => process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
 
-export const isAuthConfigured = (): boolean => Boolean(url() && anon());
+export const isAuthConfigured = (): boolean =>
+  process.env.EG_DISABLE_AUTH === "1" ? false : Boolean(url() && anon());
 
 /**
  * A client bound to the request's cookies.

@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Chip, Note, Panel } from "@/components/shell/ui";
 import { CONGRESS_BLOCKER, MIN_SAMPLE, dedupe, summarise, withLag } from "@/lib/research/congress";
-import { getCongressTrades } from "@/lib/research/alt-data";
+import { getAllCongressRows } from "@/lib/research/congress-archive";
 import { allHealth } from "@/lib/research/congress-health";
-import { PERF_MIN_SAMPLE, buildMemberPerformance } from "@/lib/research/congress-perf";
+import { PERF_MIN_SAMPLE, getMemberPerformance } from "@/lib/research/congress-perf";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Congress Trading" };
@@ -21,7 +21,7 @@ export default async function CongressPage(props: {
   const sp = await props.searchParams;
   const page = Math.max(1, Number(typeof sp.page === "string" ? sp.page : "1") || 1);
   const PER_PAGE = 50;
-  const raw = await getCongressTrades().catch(() => []);
+  const raw = await getAllCongressRows().catch(() => []);
   const rows = dedupe(raw.map((t) => withLag(t)));
   const health = allHealth(["fmp-congress", "capitol-trades"]);
   const primary = health[0]!;
@@ -35,8 +35,8 @@ export default async function CongressPage(props: {
     summarise(rows, 90, "90D"),
     summarise(rows, 365, "1Y"),
   ];
-  const perf = rows.length ? await buildMemberPerformance(raw).catch(() => []) : [];
-  const ranked = perf.filter((m) => m.scored >= PERF_MIN_SAMPLE);
+  const perfResult = rows.length ? getMemberPerformance(raw) : { members: [], computing: false, computedAt: null, scoredTrades: 0, windowFrom: null };
+  const ranked = perfResult.members.filter((m) => m.scored >= PERF_MIN_SAMPLE);
   const txDates = rows.map((r) => r.transactionDate).filter(Boolean).sort();
 
   return (
@@ -136,18 +136,18 @@ export default async function CongressPage(props: {
 
           <Panel
             title="Best Performing Members"
-            subtitle={`disclosed BUYS scored from the trade date vs the S&P 500 over the same window · members need ≥${PERF_MIN_SAMPLE} scored buys · transactions in ledger reach back to ${txDates[0] ?? "?"} (disclosures carry a legal lag up to 45 days, so the tape starts ~6 weeks deep and grows hourly)`}
+            subtitle={`disclosed BUYS scored vs the S&P 500 over a fixed 6-month horizon from each trade date · scoring window ${perfResult.windowFrom ?? "last 5y"} → today (candle budget) · ledger reaches back to ${txDates[0] ?? "?"} · ${perfResult.scoredTrades} buys scored · members need ≥${PERF_MIN_SAMPLE} scored buys${perfResult.computing ? " · RECOMPUTING in background — refresh in a couple of minutes" : perfResult.computedAt ? ` · computed ${perfResult.computedAt.slice(0, 16).replace("T", " ")} UTC` : ""}`}
             bodyClassName="p-0"
           >
             {ranked.length === 0 ? (
               <div className="px-3 py-3 text-[10.5px] leading-snug text-[var(--ink-3)]">
-                No member has {PERF_MIN_SAMPLE}+ scored buys in the ledger yet ({perf.length} members,
-                {" "}{rows.length} filings so far). The ledger accumulates every hour — rankings appear
-                automatically as members cross the sample bar. Nothing is ranked on thin evidence.
+                {perfResult.computing
+                  ? `Scoring ${rows.length.toLocaleString()} filings against real price history right now (first run walks ~250 candle series — a couple of minutes). Refresh shortly; rankings fill automatically.`
+                  : `No member has ${PERF_MIN_SAMPLE}+ scored buys inside the scoring window. Nothing is ranked on thin evidence.`}
               </div>
             ) : (
               <div className="divide-y divide-[var(--line)]">
-                {ranked.slice(0, 10).map((m, i) => (
+                {ranked.slice(0, 20).map((m, i) => (
                   <div key={m.politician} className="px-3 py-2">
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span className="text-[10px] tabular-nums text-[var(--ink-3)]">#{i + 1}</span>
@@ -164,7 +164,7 @@ export default async function CongressPage(props: {
                     </div>
                     {/* Filed purchases — the disclosure trail, not a portfolio statement */}
                     <div className="mt-1 flex flex-wrap gap-1.5">
-                      {m.purchases.slice(0, 8).map((p) => (
+                      {m.purchases.slice(0, 10).map((p) => (
                         <a
                           key={`${p.ticker}-${p.transactionDate}`}
                           href={`/ticker/${p.ticker}`}
@@ -174,7 +174,7 @@ export default async function CongressPage(props: {
                           <span className="font-semibold">{p.ticker}</span>
                           {p.excessVsSpyPct !== null && (
                             <span className={`ml-1 ${p.excessVsSpyPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                              {p.excessVsSpyPct > 0 ? "+" : ""}{p.excessVsSpyPct}%
+                              {p.excessVsSpyPct > 0 ? "+" : ""}{p.excessVsSpyPct}%{p.horizon === "TO_DATE" ? "*" : ""}
                             </span>
                           )}
                         </a>

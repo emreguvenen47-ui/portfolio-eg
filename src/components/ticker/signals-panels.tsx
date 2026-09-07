@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Chip, Panel } from "@/components/shell/ui";
-import { getCongressTrades } from "@/lib/research/alt-data";
+import { getAllCongressRows } from "@/lib/research/congress-archive";
 import { getHealth } from "@/lib/research/congress-health";
 import { withLag } from "@/lib/research/congress";
 import { discoverMarkets, getHealth as getPolyHealth } from "@/lib/providers/polymarket";
@@ -13,7 +13,7 @@ import { discoverMarkets, getHealth as getPolyHealth } from "@/lib/providers/pol
  */
 
 export async function CongressTickerPanel({ symbol }: { symbol: string }) {
-  const rows = (await getCongressTrades(symbol).catch(() => [])).map(withLag);
+  const rows = (await getAllCongressRows(symbol).catch(() => [])).map(withLag);
   const health = getHealth("fmp-congress");
   return (
     <Panel
@@ -49,7 +49,7 @@ export async function CongressTickerPanel({ symbol }: { symbol: string }) {
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 12).map((r, i) => (
+            {rows.slice(0, 15).map((r, i) => (
               <tr key={i}>
                 <td className="tl font-medium">{r.politician}</td>
                 <td className="tl text-[10px] text-[var(--ink-3)]">{r.chamber}{r.state ? ` · ${r.state}` : ""}</td>

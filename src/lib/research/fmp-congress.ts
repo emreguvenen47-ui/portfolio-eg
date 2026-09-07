@@ -1,6 +1,7 @@
 import "server-only";
 import { diskCache } from "@/lib/server/disk-cache";
 import { reportAttempt, inBackoff } from "./congress-health";
+import { normalizePolitician } from "./congress-archive";
 import type { CongressSource, CongressTrade } from "./alt-data";
 
 /**
@@ -70,7 +71,7 @@ function normalize(r: FmpRow, chamber: "House" | "Senate"): CongressTrade | null
   const [lo, hi] = amountRange(r.amount);
   const district = r.district ?? "";
   return {
-    politician: [r.firstName, r.lastName].filter(Boolean).join(" ") || (r.office ?? "Unknown"),
+    politician: normalizePolitician([r.firstName, r.lastName].filter(Boolean).join(" ") || (r.office ?? "Unknown")),
     chamber,
     ticker,
     side,

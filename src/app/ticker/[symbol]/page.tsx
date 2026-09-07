@@ -104,6 +104,7 @@ import { ValuationTab } from "@/components/ticker/valuation-tab";
 import { NewsTab } from "@/components/ticker/news-tab";
 import { OptionsTab } from "@/components/ticker/options-tab";
 import { CompanyIntelPanel, RiskProfilePanel } from "@/components/ticker/intel-panels";
+import { CongressTickerPanel, PolymarketTickerPanel } from "@/components/ticker/signals-panels";
 import { buildRiskProfile } from "@/lib/engines/risk-metrics";
 import { getUniverseRows } from "@/lib/data/opportunities";
 import { EarningsTab } from "@/components/ticker/earnings-tab";
@@ -619,6 +620,9 @@ export default async function TickerPage(props: {
               </table>
             )}
           </Panel>
+
+          {!bist && <CongressTickerPanel symbol={symbol} />}
+          {!bist && <PolymarketTickerPanel symbol={symbol} companyName={eg?.snapshot.identity.name ?? null} />}
 
           {(worldThemes.length > 0 || chains.length > 0) && (
             <Section

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Chip, Note, Panel } from "@/components/shell/ui";
 import { CONGRESS_BLOCKER, MIN_SAMPLE, dedupe, summarise, withLag } from "@/lib/research/congress";
 import { getCongressTrades } from "@/lib/research/alt-data";
@@ -13,7 +14,12 @@ export const metadata = { title: "Congress Trading" };
  * the page never uses that phrase. Transaction date and disclosure date are
  * always shown apart because the gap between them is the point.
  */
-export default async function CongressPage() {
+export default async function CongressPage(props: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await props.searchParams;
+  const page = Math.max(1, Number(typeof sp.page === "string" ? sp.page : "1") || 1);
+  const PER_PAGE = 50;
   const raw = await getCongressTrades().catch(() => []);
   const rows = dedupe(raw.map((t) => withLag(t)));
   const health = allHealth(["fmp-congress", "capitol-trades"]);
@@ -124,7 +130,14 @@ export default async function CongressPage() {
             </table>
           </Panel>
 
-          <Panel title="Recent Disclosures" bodyClassName="p-0">
+          <Panel
+            title="Disclosure Ledger"
+            subtitle={(() => {
+              const dates = rows.map((r) => r.disclosureDate || r.transactionDate).filter(Boolean).sort();
+              return `${rows.length} filings accumulated · covers ${dates[0] ?? "?"} → ${dates[dates.length - 1] ?? "?"} · deepens with every pull (free-tier feeds carry only the newest 25 per chamber per pull, so history grows forward, page by page)`;
+            })()}
+            bodyClassName="p-0"
+          >
             <div className="overflow-x-auto">
               <table className="grid-table">
                 <thead>
@@ -144,7 +157,7 @@ export default async function CongressPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.slice(0, 60).map((r, i) => (
+                  {rows.slice((page - 1) * PER_PAGE, page * PER_PAGE).map((r, i) => (
                     <tr key={i}>
                       <td className="tl">{r.politician}</td>
                       <td className="tl text-[10px] text-[var(--ink-3)]">{r.chamber}</td>
@@ -180,6 +193,15 @@ export default async function CongressPage() {
               </table>
             </div>
             <div className="border-t border-[var(--line)] px-3 py-1.5 text-[9.5px] leading-snug text-[var(--ink-3)]">
+              <span className="mr-3 inline-flex items-center gap-2">
+                {page > 1 && (
+                  <Link href={`/congress?page=${page - 1}`} className="rounded border border-[var(--line)] px-2 py-0.5 text-[10px] text-[var(--amber)] hover:bg-white/5">← Newer</Link>
+                )}
+                <span className="tabular-nums">page {page} / {Math.max(1, Math.ceil(rows.length / PER_PAGE))}</span>
+                {page * PER_PAGE < rows.length && (
+                  <Link href={`/congress?page=${page + 1}`} className="rounded border border-[var(--line)] px-2 py-0.5 text-[10px] text-[var(--amber)] hover:bg-white/5">Older →</Link>
+                )}
+              </span>
               Values are disclosed as ranges, never exact figures, so portfolio-level performance
               cannot be derived from them. Member performance statistics require at least{" "}
               {MIN_SAMPLE} valid trades before they are shown at all. Primary source: FMP&apos;s

@@ -18,10 +18,13 @@ async function run(req: Request) {
   const url = new URL(req.url);
   const days = Math.max(1, Math.min(10, Number(url.searchParams.get("days")) || 4));
   try {
+    // Congressional ledger accumulation rides the same cron (2 requests).
+    const { refreshLedger } = await import("@/lib/research/fmp-congress");
+    const congress = await refreshLedger().catch(() => null);
     // Serverless-safe chunk: ~45 symbols per invocation inside the 60s cap;
     // the hourly cron chips through the backlog run by run.
     const result = await refreshRecentReporters(days, { paceMs: 300, max: 45 });
-    return NextResponse.json({ ok: true, result, universe: getUniverseMeta() });
+    return NextResponse.json({ ok: true, result, universe: getUniverseMeta(), congressLedgerRows: congress?.rows.length ?? null });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

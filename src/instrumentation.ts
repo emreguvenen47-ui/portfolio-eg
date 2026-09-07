@@ -27,6 +27,10 @@ export async function register(): Promise<void> {
   const tick = async () => {
     if (Date.now() < pausedUntil) return;
     try {
+      // Congressional ledger accumulates hourly (2 cheap requests) so history
+      // deepens continuously instead of only when someone opens the page.
+      const { refreshLedger } = await import("@/lib/research/fmp-congress");
+      await refreshLedger().catch(() => null);
       const { refreshRecentReporters } = await import("@/lib/data/eodhd/freshness");
       const res = await refreshRecentReporters(4, { paceMs: 450, max: 600 });
       if (res.refreshed || res.inUniverse) {

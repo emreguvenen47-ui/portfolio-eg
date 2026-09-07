@@ -189,6 +189,12 @@ export interface CompanySnapshot {
     ipoDate: string | null;
     fiscalYearEnd: string | null;
     webUrl: string | null;
+    logoUrl: string | null;
+    /** GICS hierarchy — the precise classification behind the coarse sector/industry pair. */
+    gicSector: string | null;
+    gicGroup: string | null;
+    gicIndustry: string | null;
+    gicSubIndustry: string | null;
     /** Top institutional holders with quarter-over-quarter change. */
     institutions: Array<{
       name: string;

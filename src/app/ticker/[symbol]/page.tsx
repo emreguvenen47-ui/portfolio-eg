@@ -104,6 +104,7 @@ import { NewsTab } from "@/components/ticker/news-tab";
 import { OptionsTab } from "@/components/ticker/options-tab";
 import { CompanyIntelPanel, RiskProfilePanel } from "@/components/ticker/intel-panels";
 import { CongressTickerPanel, PolymarketTickerPanel } from "@/components/ticker/signals-panels";
+import { CompanyGlance } from "@/components/ticker/company-glance";
 import { buildRiskProfile } from "@/lib/engines/risk-metrics";
 import { getUniverseRows } from "@/lib/data/opportunities";
 import { EarningsTab } from "@/components/ticker/earnings-tab";
@@ -426,6 +427,7 @@ export default async function TickerPage(props: {
       {/* ========================================================= OVERVIEW */}
       {tab === "OVERVIEW" && (
         <>
+          {eg && <CompanyGlance snapshot={eg.snapshot} />}
           {eg && <QuickThesisPanel eg={eg} />}
           {eg && <CompanyPlanPanel eg={eg} />}
 
@@ -953,14 +955,6 @@ export default async function TickerPage(props: {
             });
             return risk ? <RiskProfilePanel risk={risk} /> : null;
           })()}
-          {eg?.snapshot.identity.description && (
-            <Panel title="Business" subtitle={`${eg.snapshot.identity.sector ?? ""} · ${eg.snapshot.identity.industry ?? ""} · ${eg.snapshot.identity.country ?? ""}${eg.snapshot.identity.employees ? ` · ${eg.snapshot.identity.employees.toLocaleString()} employees` : ""}`}>
-              <p className="max-w-[100ch] text-[11.5px] leading-relaxed text-[var(--ink-2)]">
-                {eg.snapshot.identity.description}
-              </p>
-            </Panel>
-          )}
-
           <Section
             title="ALTERNATIVE DATA"
             subtitle="federal awards and the experimental activity nowcast"

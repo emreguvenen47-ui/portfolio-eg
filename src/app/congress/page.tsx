@@ -151,7 +151,7 @@ export default async function CongressPage(props: {
                   <div key={m.politician} className="px-3 py-2">
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span className="text-[10px] tabular-nums text-[var(--ink-3)]">#{i + 1}</span>
-                      <span className="text-[12px] font-semibold">{m.politician}</span>
+                      <Link href={`/congress/${encodeURIComponent(m.politician)}`} className="text-[12px] font-semibold hover:text-[var(--amber)] hover:underline">{m.politician}</Link>
                       <span className="text-[9.5px] text-[var(--ink-3)]">{m.chamber}{m.state ? ` · ${m.state}` : ""}</span>
                       <span className={`tabular-nums text-[11px] font-semibold ${(m.medianExcessPct ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                         {m.medianExcessPct !== null ? `${m.medianExcessPct > 0 ? "+" : ""}${m.medianExcessPct}% median vs SPY` : "—"}
@@ -215,7 +215,7 @@ export default async function CongressPage(props: {
                 <tbody>
                   {rows.slice((page - 1) * PER_PAGE, page * PER_PAGE).map((r, i) => (
                     <tr key={i}>
-                      <td className="tl">{r.politician}</td>
+                      <td className="tl"><Link href={`/congress/${encodeURIComponent(r.politician)}`} className="hover:text-[var(--amber)] hover:underline">{r.politician}</Link></td>
                       <td className="tl text-[10px] text-[var(--ink-3)]">{r.chamber}</td>
                       <td className="tl text-[10px] text-[var(--ink-3)]">{r.state ?? "—"}</td>
                       <td className="tl text-[10px] text-[var(--ink-3)]">{r.owner ?? "—"}</td>

@@ -446,6 +446,11 @@ function normalize(symbol: string, raw: RawFundamentals): CompanySnapshot {
         ipoDate: typeof g["IPODate"] === "string" ? (g["IPODate"] as string) : null,
         fiscalYearEnd: typeof g["FiscalYearEnd"] === "string" ? (g["FiscalYearEnd"] as string) : null,
         webUrl: typeof g["WebURL"] === "string" ? (g["WebURL"] as string) : null,
+        logoUrl: typeof g["LogoURL"] === "string" ? (g["LogoURL"] as string) : null,
+        gicSector: typeof g["GicSector"] === "string" ? (g["GicSector"] as string) : null,
+        gicGroup: typeof g["GicGroup"] === "string" ? (g["GicGroup"] as string) : null,
+        gicIndustry: typeof g["GicIndustry"] === "string" ? (g["GicIndustry"] as string) : null,
+        gicSubIndustry: typeof g["GicSubIndustry"] === "string" ? (g["GicSubIndustry"] as string) : null,
         institutions: holders("Institutions").slice(0, 15),
         funds: holders("Funds").slice(0, 10).map(({ name, pctOfShares, changePct, asOf }) => ({ name, pctOfShares, changePct, asOf })),
       };
@@ -498,7 +503,7 @@ export async function getCompanySnapshot(
     if (persisted) {
       // Schema guard: snapshots persisted before the intel field existed load
       // with an empty (honest) intel block rather than crashing consumers.
-      persisted.intel ??= { officers: [], hq: null, ipoDate: null, fiscalYearEnd: null, webUrl: null, institutions: [], funds: [] };
+      persisted.intel ??= { officers: [], hq: null, ipoDate: null, fiscalYearEnd: null, webUrl: null, logoUrl: null, gicSector: null, gicGroup: null, gicIndustry: null, gicSubIndustry: null, institutions: [], funds: [] };
       const at = Date.parse(persisted.meta.fetchedAt) || 0;
       hit = { at, value: persisted };
       cache.set(key, hit);

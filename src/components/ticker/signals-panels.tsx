@@ -51,7 +51,7 @@ export async function CongressTickerPanel({ symbol }: { symbol: string }) {
           <tbody>
             {rows.slice(0, 15).map((r, i) => (
               <tr key={i}>
-                <td className="tl font-medium">{r.politician}</td>
+                <td className="tl font-medium"><Link href={`/congress/${encodeURIComponent(r.politician)}`} className="hover:text-[var(--amber)] hover:underline">{r.politician}</Link></td>
                 <td className="tl text-[10px] text-[var(--ink-3)]">{r.chamber}{r.state ? ` · ${r.state}` : ""}</td>
                 <td className="tl text-[10px] text-[var(--ink-3)]">{r.owner ?? "—"}</td>
                 <td className="tl">

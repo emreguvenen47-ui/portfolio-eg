@@ -94,7 +94,7 @@ function snapshot(over: Partial<CompanySnapshot> = {}): CompanySnapshot {
       { periodEnd: "2027-12-31", epsAvg: 15, epsLow: 12, epsHigh: 18, revenueAvg: 450e9, analystCount: 30 },
     ],
     insiderOwnershipPct: 2,
-    intel: { officers: [], hq: null, ipoDate: null, fiscalYearEnd: null, webUrl: null, institutions: [], funds: [] },
+    intel: { officers: [], hq: null, logoUrl: null, gicSector: null, gicGroup: null, gicIndustry: null, gicSubIndustry: null, ipoDate: null, fiscalYearEnd: null, webUrl: null, institutions: [], funds: [] },
     institutionalOwnershipPct: 70,
     quarterly: [q(recentQ()), q("2026-04-30"), q("2026-01-31"), q("2025-10-31")],
     annual: [],

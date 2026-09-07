@@ -243,6 +243,7 @@ export default async function SettingsPage() {
         weights, amounts, expected returns, volatilities, currencies, categories and rationale
         text all come from Excel, not from code.
       </Note>
+
     </div>
   );
 }
